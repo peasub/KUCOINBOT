@@ -1,0 +1,5 @@
+certifi
+requests
+websockets
+# zoneinfo is stdlib in Python 3.9+; install tzdata on Linux for IANA timezone support
+# tzdata
