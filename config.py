@@ -77,7 +77,7 @@ class Config:
     tp_vol_lookback_n: int = 100
     tp_vol_atr_len: int = 14
     tp_vol_bbw_len: int = 60
-    tp_vol_floor_pct: Decimal = Decimal("0.0060")
+    tp_vol_floor_pct: Decimal = Decimal("0.0080")   # [AUDIT FIX RC-8] was 0.0060, now above cost floor
     tp_vol_ceiling_pct: Decimal = Decimal("0.020")
     tp_vol_gamma: Decimal = Decimal("1.0")
 

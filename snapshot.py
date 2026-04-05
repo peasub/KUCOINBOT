@@ -381,12 +381,8 @@ async def build_snapshot(cli: KuCoinClient, meta: SymbolMeta, st: BotState) -> S
             highs_5m, lows_5m, closes_5m
         )
         if tp_base_dyn is not None:
-            tp1_eff = max(tp_req, tp_base_dyn)
-            tp1_eff = min(tp1_eff, CFG.tp_vol_ceiling_pct)
-            if atrp is not None and atrp > 0:
-                tp_cap = max(tp_req, atrp * CFG.tp_atr_cap_mult)
-                tp1_eff = min(tp1_eff, tp_cap)
-            tp2_eff = tp1_eff * CFG.tp2_mult
+            # [AUDIT FIX RC-4] Route through effective_tp for regime scaling
+            tp1_eff, tp2_eff = effective_tp(tp_base_dyn, tp_req, reg, atrp)
         else:
             tp1_eff, tp2_eff = effective_tp(CFG.tp_pct_base, tp_req, reg, atrp)
     else:  # regime

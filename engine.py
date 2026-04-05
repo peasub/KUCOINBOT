@@ -48,7 +48,6 @@ from regime import apply_regime_hysteresis, classify_regime_C, classify_regime_p
 from snapshot import build_snapshot
 from state import state_load, state_save
 from strategy import (
-    assess_entry_quality,
     collect_intents,
     diagnose_no_intent,
     exit_signal,
@@ -377,18 +376,30 @@ async def engine_loop(cli: KuCoinClient, meta: SymbolMeta) -> None:
                 last_hb = ts
                 s_hb = await build_snapshot(cli, meta, st)
                 up_s = f"{(s_hb.upnl_pct*100):.2f}%" if s_hb.upnl_pct is not None else "-"
+                sprd = float(s_hb.ask - s_hb.bid)
+                _ws_age = int(ts - MKT.last_ws_ts) if MKT.last_ws_ts > 0 else 9999
+                _c1_age = int(s_hb.candle_age_1m_s) if getattr(s_hb, "candle_age_1m_s", None) is not None else -1
+                _c5_age = int(s_hb.candle_age_5m_s) if getattr(s_hb, "candle_age_5m_s", None) is not None else -1
+                _avg_s = f"{st.avg_cost:.2f}" if st.avg_cost is not None else "-"
+                _hold_s = int(ts - st.last_trade_event_ts) if st.mode in ("IN_POSITION", "IN_POSITION_RECOVER") else 0
+                _errs = len(getattr(st, "err_ts_fatal", []) or [])
+                _vol_s = f"{float(s_hb.vol_t):.2f}" if s_hb.vol_t is not None else "-"
+                _norm_s = f"{float(s_hb.vol_norm):.2f}" if s_hb.vol_norm is not None else "-"
                 await LOG.log(
                     "INFO",
                     f"HB mode={st.mode} px={s_hb.px:.2f} bid={s_hb.bid:.2f} ask={s_hb.ask:.2f} "
+                    f"sprd={sprd:.2f} "
                     f"reg={s_hb.reg.name} p={s_hb.reg.p_trend:.2f} chop={s_hb.reg.p_chop:.2f} "
                     f"pb={s_hb.reg.p_breakout:.2f} dir={getattr(s_hb.reg,'direction_bias',0)} "
                     f"pos={s_hb.pos_usd:.2f} side={s_hb.pos_side or '-'} upnl={up_s} "
+                    f"avg={_avg_s} hold={_hold_s}s "
                     f"tp1={(s_hb.tp1_eff*100):.2f}% tp2={(s_hb.tp2_eff*100):.2f}% "
-                    f"tp_mode={s_hb.tp_mode} vol={s_hb.vol_t if s_hb.vol_t is not None else '-'} "
-                    f"norm={s_hb.vol_norm if s_hb.vol_norm is not None else '-'} "
-                    f"rsi={f'{s_hb.rsi:.1f}' if s_hb.rsi is not None else '-'} "
-                    f"cd={s_hb.cooldown_left}s obi={f'{s_hb.obi:.3f}' if s_hb.obi is not None else '-'} "
-                    f"q_free={s_hb.q_free:.2f} b_free={s_hb.b_free:.4f} open={s_hb.open_orders}",
+                    f"tp_mode={s_hb.tp_mode} vol={_vol_s} "
+                    f"norm={_norm_s} "
+                    f"rsi={f'{s_hb.rsi:.2f}' if s_hb.rsi is not None else '-'} "
+                    f"cd={s_hb.cooldown_left}s obi={f'{s_hb.obi:.2f}' if s_hb.obi is not None else '-'} "
+                    f"q_free={s_hb.q_free:.2f} b_free={s_hb.b_free:.2f} open={s_hb.open_orders} "
+                    f"ws_age={_ws_age}s c1={_c1_age}s c5={_c5_age}s errs={_errs}",
                 )
 
             # --- Decision cadence ---
@@ -518,12 +529,9 @@ async def engine_loop(cli: KuCoinClient, meta: SymbolMeta) -> None:
                             pass
 
                     if intent is not None:
-                        ok_q, score_q, reason_q = assess_entry_quality(s, intent)
-                        await LOG.log("INFO", f"ENTRY_PREFLIGHT tag={intent.strategy_id} side={intent.side} {reason_q}")
-                        if ok_q:
-                            await place_entry(cli, meta, st, s, intent)
-                        else:
-                            await LOG.log("WARN", f"ENTRY_QUALITY_REJECT tag={intent.strategy_id} side={intent.side} {reason_q}")
+                        # [AUDIT FIX RC-5] Quality gate runs inside place_entry; no double-call
+                        await LOG.log("INFO", f"ENTRY_PREFLIGHT tag={intent.strategy_id} side={intent.side} score={intent.score:.2f} urg={intent.urgency}")
+                        await place_entry(cli, meta, st, s, intent)
 
             elif st.mode in ("IN_POSITION", "IN_POSITION_RECOVER"):
                 if st.avg_cost is None:

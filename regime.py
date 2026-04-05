@@ -233,8 +233,10 @@ def combine_regimes(r1: Regime, r5: Regime) -> Regime:
     er = _blend(r1.er, r5.er)
     bbw = _blend(r1.bbw, r5.bbw)
     adx = _blend(r1.adx, r5.adx)
-    pdi = _blend(r1.di_plus, r5.di_plus)
-    mdi = _blend(r1.di_minus, r5.di_minus)
+    # [AUDIT FIX RC-9] Use 5m DI as primary (confirming TF) — blending
+    # directional indicators across timeframes can create artificial neutrality
+    pdi = r5.di_plus if r5.di_plus is not None else r1.di_plus
+    mdi = r5.di_minus if r5.di_minus is not None else r1.di_minus
 
     # [DAILY AUDIT FIX] Blend chop probability too (do NOT pass reason positionally).
     p_chop = min(D1, max(D0, (r1.p_chop * w1) + (r5.p_chop * w5)))

@@ -228,10 +228,16 @@ def update_opportunity_cost(st: "BotState", s: "Snapshot", move5: Optional[Decim
             market_moving = market_moving or True
 
         # OPP_BEAR_GUARD: do not relax thresholds into extreme bearish directional pressure.
+        # [AUDIT FIX] Added symmetric OPP_BULL_GUARD for short-side parity.
         try:
             if s.reg.adx is not None and s.reg.di_plus is not None and s.reg.di_minus is not None:
-                dmi_gap = Decimal(str(s.reg.di_minus)) - Decimal(str(s.reg.di_plus))
-                if Decimal(str(s.reg.adx)) >= CFG.long_bear_adx_min and dmi_gap >= CFG.long_bear_dmi_gap:
+                adx_v = Decimal(str(s.reg.adx))
+                dmi_gap_bear = Decimal(str(s.reg.di_minus)) - Decimal(str(s.reg.di_plus))
+                dmi_gap_bull = Decimal(str(s.reg.di_plus)) - Decimal(str(s.reg.di_minus))
+                if adx_v >= CFG.long_bear_adx_min and dmi_gap_bear >= CFG.long_bear_dmi_gap:
+                    st.opp_decay = D0
+                    return
+                if adx_v >= Decimal(str(getattr(CFG, "short_bull_adx_min", CFG.long_bear_adx_min))) and dmi_gap_bull >= Decimal(str(getattr(CFG, "short_bull_dmi_gap", CFG.long_bear_dmi_gap))):
                     st.opp_decay = D0
                     return
         except Exception:

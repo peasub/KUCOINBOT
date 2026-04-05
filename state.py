@@ -101,6 +101,8 @@ def state_load() -> BotState:
         data = json.loads(STATE_FILE.read_text())
         st = BotState()
         st.mode = data.get("mode", "FLAT")
+        st.position_side = data.get("position_side", None) or None  # [AUDIT FIX RC-6]
+        st.position_dir = int(data.get("position_dir", 0) or 0)    # [AUDIT FIX RC-6]
         st.position_qty = Decimal(data.get("position_qty", "0"))
         st.avg_cost = Decimal(data["avg_cost"]) if data.get("avg_cost") else None
         st.peak_price = Decimal(data["peak_price"]) if data.get("peak_price") else None
@@ -146,6 +148,7 @@ def state_load() -> BotState:
         st.tp2_order = dec_order(data.get("tp2_order"))
         st.exit_order = dec_order(data.get("exit_order"))
         st.err_ts = [float(x) for x in data.get("err_ts", [])]
+        st.err_ts_fatal = [float(x) for x in data.get("err_ts_fatal", [])]  # [AUDIT FIX RC-7]
         return st
     except Exception:
         return BotState()

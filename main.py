@@ -50,7 +50,7 @@ from utils import rest_to_thread
 
 def parse_args(argv: List[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="KuCoin Margin Bot V7.3.3",
+        description="KuCoin Margin Bot V7.3.4",
         add_help=True,
     )
     p.add_argument(

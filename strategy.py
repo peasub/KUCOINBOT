@@ -132,9 +132,17 @@ def assess_entry_quality(s: Snapshot, intent: Intent) -> Tuple[bool, Decimal, st
         di_sc_short = _score_linear(
             -di_gap if di_gap is not None else None, Decimal("0"), Decimal("8"), Decimal("0.40")
         )
+        # [AUDIT FIX RC-2] Compute ema_sc for short side (was hardcoded 0.16)
+        ema_sc_short = Decimal("0.35")
+        try:
+            if s.ema_f is not None:
+                dist_ema = abs(s.px - s.ema_f) / s.ema_f if s.ema_f > 0 else D0
+                ema_sc_short = _clip01(D1 - (dist_ema / Decimal("0.006")))
+        except Exception:
+            pass
         edge_sc = _clip01(edge_bps / Decimal("20"))
         score = (p_sc * Decimal("0.28") + adx_sc * Decimal("0.22") + di_sc_short * Decimal("0.18")
-                 + Decimal("0.16") + edge_sc * Decimal("0.16"))
+                 + ema_sc_short * Decimal("0.16") + edge_sc * Decimal("0.16"))
         min_score = Decimal(str(getattr(CFG, "short_quality_score_min", Decimal("0.62"))))
         if score < min_score:
             reasons.append(f"score_low:{score:.2f}")
@@ -226,7 +234,7 @@ def _dip_worker(s: Snapshot, opp_decay: Decimal = D0) -> Optional[Intent]:
             return None
         if s.px < s.vwap * (D1 - disc):
             score = float(s.reg.p_chop) + float((s.vwap - s.px) / s.vwap) * 100.0
-            return Intent("buy", "DIP", score, 0, Decimal(str(CFG.momo_size_mult)), "VWAP_DIP")
+            return Intent("buy", "DIP", score, 0, D1, "VWAP_DIP")  # [AUDIT FIX RC-3] was momo_size_mult
         return None
 
     # SHORT side
@@ -239,7 +247,7 @@ def _dip_worker(s: Snapshot, opp_decay: Decimal = D0) -> Optional[Intent]:
         return None
     if s.px > s.vwap * (D1 + disc):
         score = float(s.reg.p_chop) + float((s.px - s.vwap) / s.vwap) * 100.0
-        return Intent("sell", "DIP", score, 0, Decimal(str(CFG.momo_size_mult)), "VWAP_RALLY")
+        return Intent("sell", "DIP", score, 0, D1, "VWAP_RALLY")  # [AUDIT FIX RC-3] was momo_size_mult
     return None
 
 

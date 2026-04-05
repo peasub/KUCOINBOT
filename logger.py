@@ -157,7 +157,7 @@ class Logger:
 # ----------------------------
 # Global singletons — PRESERVED
 # ----------------------------
-BOT_VERSION = os.getenv("BOT_VERSION", "kucoin_bot_V7.3.3")
+BOT_VERSION = os.getenv("BOT_VERSION", "kucoin_bot_V7.3.4")  # [AUDIT FIX] V7.3.4 — forensic audit fixes
 LOG = Logger(BOT_VERSION)
 
 # Reference to the live BotState (set by engine_loop at startup).

@@ -310,12 +310,8 @@ def _tp_eff_from_mode(
         if tp_base_dyn is None:
             tp1_eff, tp2_eff = effective_tp(CFG.tp_pct_base, tp_req, reg, atrp_v)
             return tp1_eff, tp2_eff, None, None, None, None, None
-        tp1_eff = max(tp_req, tp_base_dyn)
-        tp1_eff = min(tp1_eff, CFG.tp_vol_ceiling_pct)
-        if atrp_v is not None and atrp_v > 0:
-            tp_cap = max(tp_req, atrp_v * CFG.tp_atr_cap_mult)
-            tp1_eff = min(tp1_eff, tp_cap)
-        tp2_eff = tp1_eff * CFG.tp2_mult
+        # [AUDIT FIX RC-4] Route through effective_tp for regime scaling
+        tp1_eff, tp2_eff = effective_tp(tp_base_dyn, tp_req, reg, atrp_v)
         return tp1_eff, tp2_eff, tp_base_dyn, vol_t, vol_min, vol_max, vol_norm
     # default: regime
     tp1_eff, tp2_eff = effective_tp(CFG.tp_pct_base, tp_req, reg, atrp_v)

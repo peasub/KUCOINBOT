@@ -218,6 +218,7 @@ class BotState:
 
     # Error budget / pause
     err_ts: List[float] = dataclasses.field(default_factory=list)
+    err_ts_fatal: List[float] = dataclasses.field(default_factory=list)  # [AUDIT FIX RC-7] was runtime-only attr
     pause_until: float = 0.0
     halt_reason: str = ""
 
