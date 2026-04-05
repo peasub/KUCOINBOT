@@ -158,13 +158,13 @@ def assess_entry_quality(s: Snapshot, intent: Intent) -> Tuple[bool, Decimal, st
 def _brain_route_weights(reg: Regime, opp_decay: Decimal = D0) -> dict:
     """[DAILY AUDIT FIX] Brain-owned routing weights (no hard upstream lockouts)."""
     if not bool(getattr(CFG, "brain_route_soft_enable", True)):
-        return {k: D1 for k in ("DIP", "TPB", "MOMO", "VBRK", "SQMR")}
+        return {k: D1 for k in ("DIP", "TPB", "MOMO", "VBRK", "SQMR", "SFOL")}
     fam = _orch_regime_route(reg, opp_decay)
     on_w = Decimal(str(getattr(CFG, "brain_route_on_weight", Decimal("1.12"))))
     off_w = Decimal(str(getattr(CFG, "brain_route_off_weight", Decimal("0.82"))))
     w = {}
-    for k in ("DIP", "TPB", "MOMO", "VBRK", "SQMR"):
-        w[k] = on_w if fam.get(k, False) else off_w
+    for k in ("DIP", "TPB", "MOMO", "VBRK", "SQMR", "SFOL"):  # [V7.3.5] added SFOL
+        w[k] = on_w if fam.get(k, fam.get("VBRK", False)) else off_w  # SFOL inherits VBRK routing
     try:
         if (
             Decimal(str(getattr(reg, "p_breakout", D0))) >= Decimal("0.80")
@@ -387,7 +387,10 @@ def _momo_worker(s: Snapshot, opp_decay: Decimal = D0) -> Optional[Intent]:
 
 
 def _vol_breakout_worker(s: Snapshot, opp_decay: Decimal = D0) -> Optional[Intent]:
-    """Volatility/squeeze breakout worker (VBRK)."""
+    """Volatility/squeeze breakout worker (VBRK) — LONG side only after V7.3.5 split.
+    [V7.3.5 FIX] Short follow-through moved to _short_followthrough_worker.
+    [V7.3.5 FIX] VBRK long blocked in CHOP unless p_breakout >= 0.55.
+    """
     if s.atrp is None or s.rsi is None:
         return None
 
@@ -404,55 +407,92 @@ def _vol_breakout_worker(s: Snapshot, opp_decay: Decimal = D0) -> Optional[Inten
         pass
 
     squeeze_like = s.reg.name == "SQUEEZE" or "1m:SQUEEZE" in str(getattr(s.reg, "reason", "") or "")
-    strong_short_follow = bool(getattr(CFG, "short_followthrough_enable", True))
 
-    bias = int(getattr(s.reg, "direction_bias", 0) or 0)
+    # [V7.3.5 FIX] Block VBRK long in CHOP unless breakout probability is strong
+    if s.reg.name == "CHOP" and p_break < Decimal("0.55"):
+        return None
 
     if not squeeze_like:
         if p_break < p_break_min:
             return None
-        if p_trend < p_trend_min and not (
-            strong_short_follow
-            and p_trend >= Decimal(str(getattr(CFG, "short_followthrough_p_trend_min", Decimal("0.36"))))
-        ):
+        if p_trend < p_trend_min:
             return None
 
-    if p_trend < Decimal(str(getattr(CFG, "squeeze_break_p_trend_min", Decimal("0.60")))) and squeeze_like and not strong_short_follow:
+    if p_trend < Decimal(str(getattr(CFG, "squeeze_break_p_trend_min", Decimal("0.60")))) and squeeze_like:
         return None
 
     urgency = 2 if CFG.vbrk_use_taker else 0
     score = float(s.reg.p_breakout) + float(s.reg.p_trend)
 
+    bias = int(getattr(s.reg, "direction_bias", 0) or 0)
     if bias == 0:
         inferred = infer_neutral_breakout_side(s)
-        if inferred is None:
-            return None
-        bias = 1 if inferred == "buy" else -1
+        if inferred is None or inferred == "sell":
+            return None  # short side handled by _short_followthrough_worker
+        bias = 1
 
-    if bias > 0:
-        _vbrk_squeeze = squeeze_like
-        _vbrk_rsi_cap = (
-            Decimal(str(getattr(CFG, "vbrk_squeeze_rsi_max", Decimal("85"))))
-            if _vbrk_squeeze
-            else Decimal(str(getattr(CFG, "long_continuation_rsi_max_vbrk", Decimal("76"))))
-        )
-        _vbrk_atrp_floor = Decimal("0.0010") if _vbrk_squeeze else Decimal("0.0022")
-        if s.rsi >= _vbrk_rsi_cap and Decimal(str(s.atrp)) <= _vbrk_atrp_floor:
-            return None
-        if _vbrk_squeeze and not strong_short_follow:
-            _sq_p_break_min = Decimal(str(getattr(CFG, "vbrk_squeeze_p_break_min", Decimal("0.45"))))
-            if p_break < _sq_p_break_min:
-                return None
-        if s.ema_f is not None and s.px <= s.ema_f:
-            return None
-        return Intent("buy", "VBRK", score, urgency, Decimal(str(CFG.vbrk_size_mult)), "VOL_BREAKOUT")
+    if bias <= 0:
+        return None  # short side handled by _short_followthrough_worker
 
-    # SHORT breakdown / bearish follow-through
+    _vbrk_squeeze = squeeze_like
+    _vbrk_rsi_cap = (
+        Decimal(str(getattr(CFG, "vbrk_squeeze_rsi_max", Decimal("85"))))
+        if _vbrk_squeeze
+        else Decimal(str(getattr(CFG, "long_continuation_rsi_max_vbrk", Decimal("76"))))
+    )
+    _vbrk_atrp_floor = Decimal("0.0010") if _vbrk_squeeze else Decimal("0.0022")
+    if s.rsi >= _vbrk_rsi_cap and Decimal(str(s.atrp)) <= _vbrk_atrp_floor:
+        return None
+    if _vbrk_squeeze:
+        _sq_p_break_min = Decimal(str(getattr(CFG, "vbrk_squeeze_p_break_min", Decimal("0.45"))))
+        if p_break < _sq_p_break_min:
+            return None
+    if s.ema_f is not None and s.px <= s.ema_f:
+        return None
+    return Intent("buy", "VBRK", score, urgency, Decimal(str(CFG.vbrk_size_mult)), "VOL_BREAKOUT")
+
+
+def _short_followthrough_worker(s: Snapshot, opp_decay: Decimal = D0) -> Optional[Intent]:
+    """[V7.3.5 NEW] Short follow-through / bearish breakdown worker (SFOL).
+    Extracted from VBRK to give it independent gating and scoring.
+    """
+    if s.atrp is None or s.rsi is None:
+        return None
     if not getattr(CFG, "enable_shorts", True):
         return None
+    if not bool(getattr(CFG, "short_followthrough_enable", True)):
+        return None
+
+    p_break = Decimal(str(getattr(s.reg, "p_breakout", D0)))
+    p_trend = Decimal(str(getattr(s.reg, "p_trend", D0)))
+    squeeze_like = s.reg.name == "SQUEEZE" or "1m:SQUEEZE" in str(getattr(s.reg, "reason", "") or "")
+
+    # Gate: need either breakout probability or trend signal for short follow-through
+    p_break_min = Decimal(str(getattr(CFG, "short_followthrough_p_break_min", Decimal("0.60"))))
+    p_trend_min_sf = Decimal(str(getattr(CFG, "short_followthrough_p_trend_min", Decimal("0.36"))))
+    try:
+        p_break_min = max(Decimal("0.40"), p_break_min - (opp_decay * Decimal("0.05")))
+    except Exception:
+        pass
+
+    if not squeeze_like and p_break < p_break_min and p_trend < p_trend_min_sf:
+        return None
+
+    bias = int(getattr(s.reg, "direction_bias", 0) or 0)
+    if bias == 0:
+        inferred = infer_neutral_breakout_side(s)
+        if inferred is None or inferred == "buy":
+            return None
+        bias = -1
+    if bias > 0:
+        return None
+
+    # Price must be below EMA
     if s.ema_f is not None and s.px >= s.ema_f:
         return None
-    if squeeze_like and s.rsi is not None:
+
+    # RSI floor check (prevent entering after extreme exhaustion)
+    if s.rsi is not None:
         squeeze_rsi_floor = Decimal(str(getattr(CFG, "short_followthrough_rsi_min", Decimal("24"))))
         if s.reg.name == "CHOP":
             squeeze_rsi_floor = max(
@@ -461,20 +501,35 @@ def _vol_breakout_worker(s: Snapshot, opp_decay: Decimal = D0) -> Optional[Inten
             )
         if Decimal(str(s.rsi)) < squeeze_rsi_floor:
             return None
-    if s.vwap is not None and strong_short_follow:
+
+    urgency = 2 if CFG.vbrk_use_taker else 0
+    score = float(p_break) + float(p_trend) + float(getattr(CFG, "short_followthrough_score_boost", Decimal("0.18")))
+
+    # VWAP extension check
+    if s.vwap is not None:
         vwap_ext = (s.vwap - s.px) / s.vwap if s.vwap > 0 else D0
         if vwap_ext > Decimal(str(getattr(CFG, "short_followthrough_vwap_ext_max", Decimal("0.020")))):
             return None
-        score += float(getattr(CFG, "short_followthrough_score_boost", Decimal("0.18")))
-        return Intent("sell", "VBRK", score, urgency, Decimal(str(CFG.vbrk_size_mult)), "SHORT_FOLLOWTHROUGH")
-    return Intent("sell", "VBRK", score, urgency, Decimal(str(CFG.vbrk_size_mult)), "VOL_BREAKDOWN")
+
+    return Intent("sell", "SFOL", score, urgency, Decimal(str(CFG.vbrk_size_mult)), "SHORT_FOLLOWTHROUGH")
 
 
 def _squeeze_meanrev_worker(s: Snapshot, opp_decay: Decimal = D0) -> Optional[Intent]:
-    """Squeeze mean-reversion worker (SQMR)."""
-    if s.reg.name != "SQUEEZE":
-        return None
+    """Squeeze mean-reversion worker (SQMR).
+    [V7.3.5 FIX] Uses p_chop + bbw threshold instead of name=="SQUEEZE" hard gate.
+    This lets SQMR fire in tight-range CHOP markets, not just when regime name is exactly SQUEEZE.
+    """
     if s.vwap is None or s.rsi is None:
+        return None
+
+    # [V7.3.5 FIX] Probability-based gate replaces name check
+    is_squeeze_like = s.reg.name == "SQUEEZE"
+    is_tight_chop = (
+        s.reg.p_chop >= Decimal(str(getattr(CFG, "sqmr_p_chop_min", Decimal("0.65"))))
+        and s.reg.bbw is not None
+        and Decimal(str(s.reg.bbw)) <= Decimal("0.008")
+    )
+    if not is_squeeze_like and not is_tight_chop:
         return None
 
     p_chop_min = CFG.sqmr_p_chop_min
@@ -605,7 +660,7 @@ def collect_intents(s: Snapshot, st: Optional[BotState] = None) -> List[Intent]:
 
     for fn in (
         _dip_worker, _trend_pullback_worker, _momo_worker,
-        _vol_breakout_worker, _squeeze_meanrev_worker,
+        _vol_breakout_worker, _short_followthrough_worker, _squeeze_meanrev_worker,  # [V7.3.5] added SFOL
     ):
         try:
             i = fn(s, opp_decay)
@@ -656,7 +711,7 @@ def orchestrate(intents: List[Intent], reg: Regime, st: Optional[BotState]) -> O
     if want_side == "sell" and bull_extreme:
         allow = [
             it for it in intents
-            if it.side == "sell" and it.strategy_id in ("MOMO", "VBRK") and it.urgency >= 2
+            if it.side == "sell" and it.strategy_id in ("MOMO", "VBRK", "SFOL") and it.urgency >= 2
         ]
         if not allow:
             return None
@@ -668,27 +723,36 @@ def orchestrate(intents: List[Intent], reg: Regime, st: Optional[BotState]) -> O
 
     opp = getattr(st, "opp_decay", D0) if st is not None else D0
 
-    pri = {"DIP": 1.00, "TPB": 1.00, "MOMO": 1.00, "VBRK": 1.00, "SQMR": 1.00}
+    pri = {"DIP": 1.00, "TPB": 1.00, "MOMO": 1.00, "VBRK": 1.00, "SQMR": 1.00, "SFOL": 1.00}  # [V7.3.5] added SFOL
     route_w = _brain_route_weights(reg, opp)
     if reg.name == "TREND":
-        pri.update({"MOMO": 1.20, "TPB": 1.15, "VBRK": 1.10, "DIP": 0.90, "SQMR": 0.85})
+        pri.update({"MOMO": 1.20, "TPB": 1.15, "VBRK": 1.10, "SFOL": 1.05, "DIP": 0.90, "SQMR": 0.85})
     elif reg.name == "BREAKOUT":
-        pri.update({"VBRK": 1.25, "MOMO": 1.15, "TPB": 1.00, "DIP": 0.85, "SQMR": 0.80})
+        pri.update({"VBRK": 1.25, "MOMO": 1.15, "SFOL": 1.10, "TPB": 1.00, "DIP": 0.85, "SQMR": 0.80})
     elif reg.name == "CHOP":
-        pri.update({"DIP": 1.20, "SQMR": 1.15, "TPB": 0.95, "MOMO": 0.85, "VBRK": 0.85})
+        pri.update({"DIP": 1.20, "SQMR": 1.15, "SFOL": 1.10, "TPB": 0.95, "MOMO": 0.85, "VBRK": 0.85})
     elif reg.name == "SQUEEZE":
-        pri.update({"SQMR": 1.20, "VBRK": 1.15, "DIP": 1.00, "TPB": 0.90, "MOMO": 0.85})
+        pri.update({"SQMR": 1.20, "VBRK": 1.15, "SFOL": 1.10, "DIP": 1.00, "TPB": 0.90, "MOMO": 0.85})
 
     def adj(i: Intent) -> float:
         base = float(i.score)
         bonus = pri.get(i.strategy_id, 1.0)
         route_bonus = float(route_w.get(i.strategy_id, D1))
-        alpha_boost = float(opp) * (0.40 if i.strategy_id in ("MOMO", "VBRK") else 0.25)
+        alpha_boost = float(opp) * (0.40 if i.strategy_id in ("MOMO", "VBRK", "SFOL") else 0.25)
         return (base * bonus * route_bonus) + alpha_boost + (0.05 * float(i.urgency))
 
     if want_side is None and bool(getattr(CFG, "orch_neutral_enable", True)):
         buy_cand = [i for i in cand if i.side == "buy"]
         sell_cand = [i for i in cand if i.side == "sell"]
+
+        # [V7.3.5 FIX] Relaxed neutral path for DIP/SQMR in CHOP regime.
+        # In strong CHOP (p_chop >= 0.65), mean-reversion workers are allowed through
+        # the neutral filter with p_chop replacing the p_trend/p_breakout requirement.
+        _meanrev_in_chop = (
+            reg.p_chop >= Decimal("0.65")
+            and all(i.strategy_id in ("DIP", "SQMR", "SFOL") for i in cand)
+        )
+
         if buy_cand and sell_cand:
             buy_top = max(buy_cand, key=adj)
             sell_top = max(sell_cand, key=adj)
@@ -700,7 +764,7 @@ def orchestrate(intents: List[Intent], reg: Regime, st: Optional[BotState]) -> O
                 return None
             if max(buy_score, sell_score) < Decimal(str(getattr(CFG, "orch_neutral_min_score", Decimal("0.78")))):
                 return None
-            if (
+            if not _meanrev_in_chop and (
                 Decimal(str(reg.p_trend)) < Decimal(str(getattr(CFG, "orch_neutral_trend_min", Decimal("0.62"))))
                 and Decimal(str(reg.p_breakout)) < Decimal(str(getattr(CFG, "orch_neutral_breakout_min", Decimal("0.58"))))
             ):
@@ -710,7 +774,7 @@ def orchestrate(intents: List[Intent], reg: Regime, st: Optional[BotState]) -> O
             win = max((buy_cand or sell_cand), key=adj)
             if Decimal(str(adj(win))) < Decimal(str(getattr(CFG, "orch_neutral_min_score", Decimal("0.78")))):
                 return None
-            if (
+            if not _meanrev_in_chop and (
                 Decimal(str(reg.p_trend)) < Decimal(str(getattr(CFG, "orch_neutral_trend_min", Decimal("0.62"))))
                 and Decimal(str(reg.p_breakout)) < Decimal(str(getattr(CFG, "orch_neutral_breakout_min", Decimal("0.58"))))
             ):
@@ -729,7 +793,7 @@ def orchestrate(intents: List[Intent], reg: Regime, st: Optional[BotState]) -> O
     except Exception:
         pass
 
-    if int(getattr(top, "urgency", 0)) >= 2 and top.strategy_id not in ("MOMO", "VBRK"):
+    if int(getattr(top, "urgency", 0)) >= 2 and top.strategy_id not in ("MOMO", "VBRK", "SFOL"):  # [V7.3.5] added SFOL
         top.urgency = 1
         top.reason = (top.reason + " | taker_downgraded") if getattr(top, "reason", "") else "taker_downgraded"
     return top
@@ -766,7 +830,7 @@ def exit_signal(s: Snapshot, st: BotState) -> Tuple[Optional[str], str]:
             return "EMERGENCY", f"dd={dd:.3%} th={dd_th:.3%}"
 
     entry_tag = str(getattr(st, "entry_intent_tag", "") or "")
-    if entry_tag in ("MOMO", "VBRK") and s.pos_age_min is not None and s.upnl_pct is not None:
+    if entry_tag in ("MOMO", "VBRK", "SFOL") and s.pos_age_min is not None and s.upnl_pct is not None:  # [V7.3.5] added SFOL
         bias_now = int(getattr(s.reg, "direction_bias", 0) or 0)
         try:
             if bool(getattr(CFG, "continuation_giveback_enable", True)) and st.peak_price is not None:

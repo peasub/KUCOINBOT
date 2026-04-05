@@ -621,7 +621,7 @@ async def maintain_entry_order(
             await LOG.log("INFO", f"ENTRY_TTL_CANCEL age={int(age)}s -> FLAT")
         return
 
-    high_alpha = st.entry_intent_urg >= 2 and st.entry_intent_tag in ("MOMO", "VBRK")
+    high_alpha = st.entry_intent_urg >= 2 and st.entry_intent_tag in ("MOMO", "VBRK", "SFOL")  # [V7.3.5] added SFOL
     queue_lost = False
     try:
         if side == "buy":

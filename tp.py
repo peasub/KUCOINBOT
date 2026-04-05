@@ -137,6 +137,10 @@ def effective_tp(
 ) -> Tuple[Decimal, Decimal]:
     """One master TP knob with regime-aware scaling + volatility realism.
 
+    [V7.3.5 FIX] Scale only the edge above cost floor (tp_req) so regime
+    compression never crushes TP below break-even. The cost floor is sacred;
+    only the profit margin above it gets regime-weighted.
+
     Returns (tp1, tp2).
     """
     if reg.name == "CHOP":
@@ -149,7 +153,11 @@ def effective_tp(
         base_mult = Decimal("1.00")
 
     prob_mult = Decimal("0.85") + (reg.p_trend * Decimal("0.50"))  # 0.85..1.35
-    tp_struct = tp_base * base_mult * prob_mult
+
+    # [V7.3.5 FIX] Only scale the portion above cost floor, not the entire TP base.
+    # This prevents CHOP regime (0.55x) from crushing vol-mode TP to tp_req.
+    edge = max(D0, tp_base - tp_req)
+    tp_struct = tp_req + (edge * base_mult * prob_mult)
 
     if atrp is not None and atrp > 0:
         tp_cap = max(tp_req, atrp * CFG.tp_atr_cap_mult)
@@ -180,7 +188,7 @@ def adjust_tp_for_strategy(
         )
         if (
             bool(getattr(CFG, "vbrk_tp_compress_enable", True))
-            and entry_tag == "VBRK"
+            and entry_tag in ("VBRK", "SFOL")  # [V7.3.5] added SFOL
             and side_pos == "SHORT"
             and getattr(s.reg, "name", "") in ("CHOP", "MIXED")
             and Decimal(str(getattr(s.reg, "p_trend", D0))) <= Decimal(str(getattr(CFG, "vbrk_tp_compress_short_p_trend_max", Decimal("0.62"))))
@@ -191,7 +199,7 @@ def adjust_tp_for_strategy(
 
         if (
             bool(getattr(CFG, "long_continuation_tp_compress_enable", True))
-            and entry_tag in ("MOMO", "VBRK", "TPB")
+            and entry_tag in ("MOMO", "VBRK", "TPB", "SFOL")  # [V7.3.5] added SFOL
             and side_pos == "LONG"
             and (
                 s.atrp is not None
