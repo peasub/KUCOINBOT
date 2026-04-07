@@ -270,7 +270,10 @@ async def probability_report(closes: List[Decimal], max_hold_min: int, tp_base: 
 async def recover_avg_cost_if_needed(
     cli: KuCoinClient, meta: SymbolMeta, st: BotState, s: Snapshot
 ) -> None:
-    """V7 avg-cost recovery using recent fills reconstructed against current net position."""
+    """V7 avg-cost recovery using recent fills reconstructed against current net position.
+    [V7.3.6 FIX] Fallback to market price after 10 failed attempts (5 minutes)
+    to prevent indefinite IN_POSITION_RECOVER stuck state.
+    """
     try:
         if st.avg_cost is not None:
             return
@@ -283,36 +286,55 @@ async def recover_avg_cost_if_needed(
             return
         st.last_avg_recover_ts = ts
 
+        # [V7.3.6] Track recovery attempts
+        _attempts = int(getattr(st, "_avg_recover_attempts", 0) or 0) + 1
+        st._avg_recover_attempts = _attempts  # type: ignore[attr-defined]
+
         fills = await rest_to_thread(cli.list_fills, CFG.symbol, None, 200, None)
-        if not fills:
-            return
 
-        target_qty = s.pos_qty
-        current_side = s.pos_side
-        remaining = target_qty
-        cost = D0
-        for f in fills:
-            side = str(f.get("side", "")).lower()
-            sz = Decimal(str(f.get("size") or "0"))
-            px = Decimal(str(f.get("price") or "0"))
-            if sz <= 0 or px <= 0:
-                continue
-            if current_side == "LONG" and side != "buy":
-                continue
-            if current_side == "SHORT" and side != "sell":
-                continue
-            take = min(remaining, sz)
-            cost += take * px
-            remaining -= take
-            if remaining <= 0:
-                break
+        if fills:
+            target_qty = s.pos_qty
+            current_side = s.pos_side
+            remaining = target_qty
+            cost = D0
+            for f in fills:
+                side = str(f.get("side", "")).lower()
+                sz = Decimal(str(f.get("size") or "0"))
+                px = Decimal(str(f.get("price") or "0"))
+                if sz <= 0 or px <= 0:
+                    continue
+                if current_side == "LONG" and side != "buy":
+                    continue
+                if current_side == "SHORT" and side != "sell":
+                    continue
+                take = min(remaining, sz)
+                cost += take * px
+                remaining -= take
+                if remaining <= 0:
+                    break
 
-        if target_qty > 0 and (target_qty - remaining) > 0:
-            from utils import q_down
-            from models import SymbolMeta as _SM
-            st.avg_cost = q_down(cost / (target_qty - remaining), meta.price_increment)
+            if target_qty > 0 and (target_qty - remaining) > 0:
+                from utils import q_down
+                st.avg_cost = q_down(cost / (target_qty - remaining), meta.price_increment)
+                st.mode = "IN_POSITION"
+                st._avg_recover_attempts = 0  # type: ignore[attr-defined]
+                await LOG.log("WARN", f"AVG_RECOVER side={current_side} avg={st.avg_cost:.2f} qty≈{(target_qty-remaining)} attempts={_attempts}")
+                return
+
+        # [V7.3.6 FIX] Fallback: after 10 failed attempts (~5 min), use market price.
+        # This prevents indefinite stuck state. The avg may be inaccurate but the bot
+        # can at least place TPs and manage/exit the position.
+        if _attempts >= 10:
+            st.avg_cost = s.px
             st.mode = "IN_POSITION"
-            await LOG.log("WARN", f"AVG_RECOVER side={current_side} avg={st.avg_cost:.2f} qty≈{(target_qty-remaining)}")
+            st._avg_recover_attempts = 0  # type: ignore[attr-defined]
+            st.last_trade_event_ts = ts
+            st.entry_tp1_eff = s.tp1_eff
+            st.entry_tp2_eff = s.tp2_eff
+            await LOG.log("WARN", f"AVG_RECOVER_FALLBACK side={s.pos_side} avg_fallback={s.px:.2f} qty={s.pos_qty} attempts={_attempts} — using market price")
+        else:
+            await LOG.log("INFO", f"AVG_RECOVER_PENDING side={s.pos_side} attempt={_attempts}/10 fills_matched=0")
+
     except Exception as e:
         await LOG.log("WARN", f"AVG_RECOVER_FAIL {e}")
 

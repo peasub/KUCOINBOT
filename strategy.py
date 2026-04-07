@@ -523,11 +523,13 @@ def _squeeze_meanrev_worker(s: Snapshot, opp_decay: Decimal = D0) -> Optional[In
         return None
 
     # [V7.3.5 FIX] Probability-based gate replaces name check
+    # [V7.3.6 FIX] bbw threshold raised from 0.008 to 0.012 (was too tight — SQMR never fired)
     is_squeeze_like = s.reg.name == "SQUEEZE"
+    _sqmr_bbw_max = Decimal(str(getattr(CFG, "orch_vol_exp_bbw_min", Decimal("0.012"))))
     is_tight_chop = (
         s.reg.p_chop >= Decimal(str(getattr(CFG, "sqmr_p_chop_min", Decimal("0.65"))))
         and s.reg.bbw is not None
-        and Decimal(str(s.reg.bbw)) <= Decimal("0.008")
+        and Decimal(str(s.reg.bbw)) <= _sqmr_bbw_max
     )
     if not is_squeeze_like and not is_tight_chop:
         return None
