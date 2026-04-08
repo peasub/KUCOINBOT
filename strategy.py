@@ -43,6 +43,15 @@ def assess_entry_quality(s: Snapshot, intent: Intent) -> Tuple[bool, Decimal, st
     edge_bps = entry_expected_edge_bps(s, intent)
     reasons: List[str] = []
 
+    # [PHASE A — PROVEN] Low conviction hard block.
+    # Trade #6 on April 7: SFOL SHORT entered at p=0.17, hit EMERGENCY at -1.093%.
+    try:
+        _min_p = Decimal(str(getattr(CFG, "min_p_trend_for_entry", Decimal("0.20"))))
+        if s.reg.p_trend is not None and s.reg.p_trend < _min_p:
+            return False, D0, f"score=0.00|blocker_family=low_conviction|p_trend={s.reg.p_trend:.2f}|edge_bps={edge_bps:.1f}"
+    except Exception:
+        pass
+
     def _clip01(x: Decimal) -> Decimal:
         return max(D0, min(D1, x))
 
@@ -59,7 +68,7 @@ def assess_entry_quality(s: Snapshot, intent: Intent) -> Tuple[bool, Decimal, st
         try:
             if edge_bps < Decimal(str(getattr(CFG, "long_quality_edge_buffer_bps", Decimal("8")))):
                 reasons.append("edge_thin")
-                return False, D0, f"score=0.00|edge_bps={edge_bps:.1f}|reason={'/'.join(reasons)}"
+                return False, D0, f"score=0.00|blocker_family=edge_too_thin|edge_bps={edge_bps:.1f}|reason={'/'.join(reasons)}"
         except Exception:
             pass
 
@@ -70,7 +79,7 @@ def assess_entry_quality(s: Snapshot, intent: Intent) -> Tuple[bool, Decimal, st
                 and s.px < s.ema_f
             ):
                 reasons.append("falling_knife")
-                return False, D0, f"score=0.00|edge_bps={edge_bps:.1f}|reason={'/'.join(reasons)}"
+                return False, D0, f"score=0.00|blocker_family=falling_knife|edge_bps={edge_bps:.1f}|reason={'/'.join(reasons)}"
 
         if s.ema_f is not None and s.ret5_1m is not None:
             if (
@@ -79,7 +88,7 @@ def assess_entry_quality(s: Snapshot, intent: Intent) -> Tuple[bool, Decimal, st
                 and s.px <= s.ema_f
             ):
                 reasons.append("ret5_impulse")
-                return False, D0, f"score=0.00|edge_bps={edge_bps:.1f}|reason={'/'.join(reasons)}"
+                return False, D0, f"score=0.00|blocker_family=ret5_impulse|edge_bps={edge_bps:.1f}|reason={'/'.join(reasons)}"
 
         p_sc = _score_linear(Decimal(str(s.reg.p_trend)), Decimal("0.50"), Decimal("0.78"), Decimal("0.50"))
         adx_sc = _score_linear(
@@ -102,14 +111,14 @@ def assess_entry_quality(s: Snapshot, intent: Intent) -> Tuple[bool, Decimal, st
         min_score = Decimal(str(getattr(CFG, "long_quality_score_min", Decimal("0.60"))))
         if score < min_score:
             reasons.append(f"score_low:{score:.2f}")
-            return False, score, f"score={score:.2f}|edge_bps={edge_bps:.1f}|reason={'/'.join(reasons)}"
+            return False, score, f"score={score:.2f}|blocker_family=quality_reject_score|edge_bps={edge_bps:.1f}|reason={'/'.join(reasons)}"
         return True, score, f"score={score:.2f}|edge_bps={edge_bps:.1f}"
 
     if intent.side == "sell" and bool(getattr(CFG, "short_quality_enable", True)):
         try:
             if edge_bps < Decimal(str(getattr(CFG, "short_quality_edge_buffer_bps", Decimal("8")))):
                 reasons.append("edge_thin")
-                return False, D0, f"score=0.00|edge_bps={edge_bps:.1f}|reason={'/'.join(reasons)}"
+                return False, D0, f"score=0.00|blocker_family=edge_too_thin|edge_bps={edge_bps:.1f}|reason={'/'.join(reasons)}"
         except Exception:
             pass
 
@@ -120,7 +129,7 @@ def assess_entry_quality(s: Snapshot, intent: Intent) -> Tuple[bool, Decimal, st
                 and s.px >= s.ema_f
             ):
                 reasons.append("ret5_rally")
-                return False, D0, f"score=0.00|edge_bps={edge_bps:.1f}|reason={'/'.join(reasons)}"
+                return False, D0, f"score=0.00|blocker_family=ret5_rally|edge_bps={edge_bps:.1f}|reason={'/'.join(reasons)}"
 
         p_sc = _score_linear(
             D1 - Decimal(str(s.reg.p_trend)), Decimal("0.30"), Decimal("0.70"), Decimal("0.50")
@@ -146,7 +155,7 @@ def assess_entry_quality(s: Snapshot, intent: Intent) -> Tuple[bool, Decimal, st
         min_score = Decimal(str(getattr(CFG, "short_quality_score_min", Decimal("0.62"))))
         if score < min_score:
             reasons.append(f"score_low:{score:.2f}")
-            return False, score, f"score={score:.2f}|edge_bps={edge_bps:.1f}|reason={'/'.join(reasons)}"
+            return False, score, f"score={score:.2f}|blocker_family=quality_reject_score|edge_bps={edge_bps:.1f}|reason={'/'.join(reasons)}"
         return True, score, f"score={score:.2f}|edge_bps={edge_bps:.1f}"
 
     return True, Decimal("1.00"), f"edge_bps={edge_bps:.1f}"

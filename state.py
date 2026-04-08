@@ -58,6 +58,9 @@ def state_save(st: BotState) -> None:
             "entry_tp1_eff", "entry_tp2_eff",
             # Additional Decimal fields that must be stringified before JSON
             "entry_qty_hint", "adverse_sel_ema_bps",
+            # [PHASE A] Protection state Decimal fields
+            "prot_last_exit_pnl_bps", "prot_last_exit_best_excursion_bps",
+            "prot_daily_pnl_bps",
         ]
         for k in _decimal_fields:
             v = data.get(k)
@@ -80,6 +83,8 @@ def state_save(st: BotState) -> None:
             # Monitoring state that resets on restart
             "adverse_sel_ema_bps", "adverse_sel_samples",
             "pending_markout_ts", "pending_markout_px", "pending_markout_side",
+            # [PHASE A] Excursion tracking is transient (resets each position)
+            "best_excursion_bps", "worst_excursion_bps",
         ]:
             data.pop(kk, None)
 
@@ -149,6 +154,20 @@ def state_load() -> BotState:
         st.exit_order = dec_order(data.get("exit_order"))
         st.err_ts = [float(x) for x in data.get("err_ts", [])]
         st.err_ts_fatal = [float(x) for x in data.get("err_ts_fatal", [])]  # [AUDIT FIX RC-7]
+
+        # [PHASE A] Load protection state — all with safe defaults
+        st.prot_last_exit_reason = data.get("prot_last_exit_reason", "")
+        st.prot_last_exit_side = data.get("prot_last_exit_side", "")
+        st.prot_last_exit_ts = float(data.get("prot_last_exit_ts", 0.0) or 0.0)
+        st.prot_last_exit_pnl_bps = Decimal(data["prot_last_exit_pnl_bps"]) if data.get("prot_last_exit_pnl_bps") else None
+        st.prot_last_exit_best_excursion_bps = Decimal(data["prot_last_exit_best_excursion_bps"]) if data.get("prot_last_exit_best_excursion_bps") else None
+        st.prot_consecutive_losses = int(data.get("prot_consecutive_losses", 0) or 0)
+        st.prot_daily_pnl_bps = Decimal(data.get("prot_daily_pnl_bps", "0") or "0")
+        st.prot_daily_pnl_reset_date = data.get("prot_daily_pnl_reset_date", "")
+        st.prot_last_worker_tag = data.get("prot_last_worker_tag", "")
+        st.prot_last_entry_side = data.get("prot_last_entry_side", "")
+        st.prot_same_direction_streak = int(data.get("prot_same_direction_streak", 0) or 0)
+
         return st
     except Exception:
         return BotState()

@@ -57,6 +57,14 @@ from utils import D0, D1, add_error, rest_to_thread, update_adverse_selection_mo
 
 import logger as _logger_module  # needed to set GLOBAL_STATE_REF
 
+# [PHASE A] Protections and ledger
+try:
+    from protections import check_entry_allowed, update_protection_state_on_exit, update_maturity_on_entry, continuation_maturity_penalty
+    from trade_quality_ledger import record_trade_quality, build_entry_taken_record, build_entry_rejected_record, build_exit_record, _dec_str
+    _PHASE_A_AVAILABLE = True
+except ImportError:
+    _PHASE_A_AVAILABLE = False
+
 
 # ----------------------------
 # Latency watchdog
@@ -530,7 +538,10 @@ async def engine_loop(cli: KuCoinClient, meta: SymbolMeta) -> None:
                             and (ts - float(getattr(st, "last_no_intent_log_ts", 0.0) or 0.0)) >= 60.0  # type: ignore[attr-defined]
                         ):
                             st.last_no_intent_log_ts = ts  # type: ignore[attr-defined]
-                            await LOG.log("INFO", f"ORCH_NO_INTENT reg={s.reg.name} dir={getattr(s.reg,'direction_bias',0)} p={s.reg.p_trend:.2f} pb={s.reg.p_breakout:.2f} why={diagnose_no_intent(s)}")
+                            _diag = diagnose_no_intent(s)
+                            # [PHASE A] Extract blocker_family from diagnosis
+                            _bf = "neutral_no_side" if "neutral_no_side" in _diag else ("no_directional_bias" if "no_side" in _diag else "regime_unsuitable")
+                            await LOG.log("INFO", f"ORCH_NO_INTENT reg={s.reg.name} dir={getattr(s.reg,'direction_bias',0)} p={s.reg.p_trend:.2f} pb={s.reg.p_breakout:.2f} why={_diag} blocker_family={_bf}")
                     elif intent is None:
                         if (ts - float(getattr(st, "last_orch_standdown_log_ts", 0.0) or 0.0)) >= 60.0:  # type: ignore[attr-defined]
                             st.last_orch_standdown_log_ts = ts  # type: ignore[attr-defined]
@@ -539,7 +550,7 @@ async def engine_loop(cli: KuCoinClient, meta: SymbolMeta) -> None:
                                 _lead_txt = f"{_leader.strategy_id}:{_leader.side}:{_leader.score:.2f}:u{_leader.urgency}"
                             except Exception:
                                 _lead_txt = "-"
-                            await LOG.log("INFO", f"ORCH_STANDDOWN reg={s.reg.name} intents={len(intents)} top={_lead_txt}")
+                            await LOG.log("INFO", f"ORCH_STANDDOWN reg={s.reg.name} intents={len(intents)} top={_lead_txt} blocker_family=orch_standdown")
 
                     if len(intents) >= 2:
                         try:
@@ -551,11 +562,62 @@ async def engine_loop(cli: KuCoinClient, meta: SymbolMeta) -> None:
                             pass
 
                     if intent is not None:
-                        # [AUDIT FIX RC-5] Quality gate runs inside place_entry; no double-call
-                        await LOG.log("INFO", f"ENTRY_PREFLIGHT tag={intent.strategy_id} side={intent.side} score={intent.score:.2f} urg={intent.urgency}")
-                        await place_entry(cli, meta, st, s, intent)
+                        # [PHASE A] Protections check
+                        _prot_blocked = False
+                        if _PHASE_A_AVAILABLE:
+                            try:
+                                _prot_ok, _prot_reason = check_entry_allowed(st, s, intent)
+                                if not _prot_ok:
+                                    _prot_blocked = True
+                                    await LOG.log("WARN", f"PROTECTION_BLOCK tag={intent.strategy_id} side={intent.side} reason={_prot_reason}")
+                                    try:
+                                        record_trade_quality(build_entry_rejected_record(
+                                            ts=ts, regime_name=s.reg.name,
+                                            p_trend=s.reg.p_trend, p_chop=s.reg.p_chop, p_breakout=s.reg.p_breakout,
+                                            direction_bias=int(getattr(s.reg, "direction_bias", 0) or 0),
+                                            worker_tag=intent.strategy_id, raw_score=Decimal(str(intent.score)),
+                                            orch_adjusted_score=Decimal(str(intent.score)),
+                                            blocker_family="protection_block", edge_bps=D0,
+                                            side=intent.side, notes=_prot_reason,
+                                        ))
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
+
+                        if not _prot_blocked:
+                            # [PHASE A] Apply maturity penalty
+                            if _PHASE_A_AVAILABLE and bool(getattr(CFG, "maturity_penalty_enable", True)):
+                                try:
+                                    _mat_pen = continuation_maturity_penalty(st, intent)
+                                    if _mat_pen > D0:
+                                        intent.score = max(0.0, intent.score - float(_mat_pen))
+                                        await LOG.log("INFO", f"MATURITY_PENALTY tag={intent.strategy_id} side={intent.side} penalty={_mat_pen:.2f} adj_score={intent.score:.2f} streak={getattr(st,'prot_same_direction_streak',0)}")
+                                except Exception:
+                                    pass
+
+                            # [AUDIT FIX RC-5] Quality gate runs inside place_entry; no double-call
+                            await LOG.log("INFO", f"ENTRY_PREFLIGHT tag={intent.strategy_id} side={intent.side} score={intent.score:.2f} urg={intent.urgency}")
+                            await place_entry(cli, meta, st, s, intent)
 
             elif st.mode in ("IN_POSITION", "IN_POSITION_RECOVER"):
+                # [PHASE A] Track best/worst excursion while in position
+                if _PHASE_A_AVAILABLE and st.avg_cost is not None and st.avg_cost > 0:
+                    try:
+                        _side = st.position_side or s.pos_side
+                        if _side == "LONG":
+                            _exc_bps = ((s.px - st.avg_cost) / st.avg_cost) * Decimal("10000")
+                        elif _side == "SHORT":
+                            _exc_bps = ((st.avg_cost - s.px) / st.avg_cost) * Decimal("10000")
+                        else:
+                            _exc_bps = D0
+                        if st.best_excursion_bps is None or _exc_bps > st.best_excursion_bps:
+                            st.best_excursion_bps = _exc_bps
+                        if st.worst_excursion_bps is None or _exc_bps < st.worst_excursion_bps:
+                            st.worst_excursion_bps = _exc_bps
+                    except Exception:
+                        pass
+
                 if st.avg_cost is None:
                     st.mode = "IN_POSITION_RECOVER"
                     await recover_avg_cost_if_needed(cli, meta, st, s)

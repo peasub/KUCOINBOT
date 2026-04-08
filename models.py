@@ -222,6 +222,27 @@ class BotState:
     pause_until: float = 0.0
     halt_reason: str = ""
 
+    # ----------------------------
+    # Phase A: Protection state (persisted across restarts)
+    # ----------------------------
+    prot_last_exit_reason: str = ""           # EMERGENCY, TP1, TP2, THESIS_STALE, MARKET, etc.
+    prot_last_exit_side: str = ""             # entry side of the exited position (buy or sell)
+    prot_last_exit_ts: float = 0.0
+    prot_last_exit_pnl_bps: Optional[Decimal] = None
+    prot_last_exit_best_excursion_bps: Optional[Decimal] = None
+    prot_consecutive_losses: int = 0
+    prot_daily_pnl_bps: Decimal = D0
+    prot_daily_pnl_reset_date: str = ""
+
+    # Continuation maturity tracking
+    prot_last_worker_tag: str = ""
+    prot_last_entry_side: str = ""
+    prot_same_direction_streak: int = 0
+
+    # In-position excursion tracking (transient, not persisted)
+    best_excursion_bps: Optional[Decimal] = None
+    worst_excursion_bps: Optional[Decimal] = None
+
 
 # ----------------------------
 # Market data cache

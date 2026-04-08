@@ -41,6 +41,53 @@ from utils import (
 )
 from tp import regime_sizing_mult
 
+# [PHASE A] Ledger and protections — graceful degradation
+try:
+    from protections import update_protection_state_on_exit, update_maturity_on_entry
+    from trade_quality_ledger import record_trade_quality, build_entry_taken_record, build_entry_rejected_record, build_exit_record, _dec_str
+    _PHASE_A_OK = True
+except ImportError:
+    _PHASE_A_OK = False
+
+
+def _record_exit_to_ledger(st: BotState, s: Snapshot, exit_reason: str) -> None:
+    """[PHASE A] Record exit to trade quality ledger and update protections state. Best-effort."""
+    if not _PHASE_A_OK:
+        return
+    try:
+        _side = st.position_side or getattr(s, "pos_side", None) or ""
+        _entry_side = "buy" if _side == "LONG" else ("sell" if _side == "SHORT" else "")
+        _avg = st.avg_cost
+        _best = getattr(st, "best_excursion_bps", None)
+        _worst = getattr(st, "worst_excursion_bps", None)
+        _hold_s = int(now_ts() - st.pos_open_ts) if st.pos_open_ts > 0 else 0
+        _pnl_bps = None
+        if _avg is not None and _avg > 0 and s.px > 0:
+            if _side == "LONG":
+                _pnl_bps = ((s.px - _avg) / _avg) * Decimal("10000")
+            elif _side == "SHORT":
+                _pnl_bps = ((_avg - s.px) / _avg) * Decimal("10000")
+
+        _tag = str(getattr(st, "entry_intent_tag", "") or "")
+        record_trade_quality(build_exit_record(
+            ts=now_ts(),
+            regime_name=s.reg.name if hasattr(s, "reg") else "",
+            p_trend=getattr(s.reg, "p_trend", None) if hasattr(s, "reg") else None,
+            p_chop=getattr(s.reg, "p_chop", None) if hasattr(s, "reg") else None,
+            p_breakout=getattr(s.reg, "p_breakout", None) if hasattr(s, "reg") else None,
+            direction_bias=int(getattr(s.reg, "direction_bias", 0) or 0) if hasattr(s, "reg") else 0,
+            worker_tag=_tag, side=_entry_side,
+            entry_px=_avg, exit_px=s.px,
+            best_excursion_bps=_best, worst_excursion_bps=_worst,
+            hold_seconds=_hold_s, realized_pnl_bps=_pnl_bps,
+            exit_reason=exit_reason,
+            notes=f"avg={_avg} qty={st.position_qty}",
+        ))
+
+        update_protection_state_on_exit(st, exit_reason, _entry_side, _pnl_bps, _best)
+    except Exception:
+        pass  # never crash
+
 
 # ----------------------------
 # Client order ID helpers
@@ -233,6 +280,25 @@ async def place_entry(
     ok_q, score_q, reason_q = assess_entry_quality(s, intent)
     if not ok_q:
         await LOG.log("WARN", f"ENTRY_QUALITY_REJECT tag={intent.strategy_id} side={intent.side} {reason_q}")
+        # [PHASE A] Record rejection to ledger
+        if _PHASE_A_OK:
+            try:
+                import re as _re
+                _bf_match = _re.search(r"blocker_family=(\S+)", reason_q)
+                _bf = _bf_match.group(1).split("|")[0] if _bf_match else "quality_reject_score"
+                _edge_match = _re.search(r"edge_bps=([\d.]+)", reason_q)
+                _edge = Decimal(_edge_match.group(1)) if _edge_match else D0
+                record_trade_quality(build_entry_rejected_record(
+                    ts=now_ts(), regime_name=s.reg.name,
+                    p_trend=s.reg.p_trend, p_chop=s.reg.p_chop, p_breakout=s.reg.p_breakout,
+                    direction_bias=int(getattr(s.reg, "direction_bias", 0) or 0),
+                    worker_tag=intent.strategy_id, raw_score=Decimal(str(intent.score)),
+                    orch_adjusted_score=score_q,
+                    blocker_family=_bf, edge_bps=_edge,
+                    side=intent.side, notes=reason_q,
+                ))
+            except Exception:
+                pass
         return
 
     mult = regime_sizing_mult(s.reg)
@@ -795,6 +861,28 @@ async def reconcile_orders(
                     st.trade_vol_max = s.vol_max; st.trade_vol_norm = s.vol_norm
                     await LOG.log("INFO", f"TP_FREEZE_ENTRY tp1={(s.tp1_eff*100):.2f}% tp2={(s.tp2_eff*100):.2f}%")
                 await LOG.log("INFO", f"ENTRY_FILLED qty={deal_size} avg={st.avg_cost:.2f} tp1={(s.tp1_eff*100):.2f}%")
+                # [PHASE A] Record entry to ledger, update maturity, reset excursion
+                if _PHASE_A_OK:
+                    try:
+                        _tag = str(getattr(st, "entry_intent_tag", "") or "")
+                        _side = "buy" if st.position_side == "LONG" else "sell"
+                        from tp import entry_expected_edge_bps as _eeb
+                        from models import Intent as _Intent
+                        _dummy_intent = _Intent(side=_side, strategy_id=_tag, score=0.0, urgency=0)
+                        _edge = _eeb(s, _dummy_intent)
+                        record_trade_quality(build_entry_taken_record(
+                            ts=now_ts(), regime_name=s.reg.name,
+                            p_trend=s.reg.p_trend, p_chop=s.reg.p_chop, p_breakout=s.reg.p_breakout,
+                            direction_bias=int(getattr(s.reg, "direction_bias", 0) or 0),
+                            worker_tag=_tag, raw_score=D0, orch_adjusted_score=D0,
+                            edge_bps=_edge, side=_side, entry_px=st.avg_cost,
+                            notes=f"qty={deal_size}",
+                        ))
+                        update_maturity_on_entry(st, _tag, _side)
+                        st.best_excursion_bps = None
+                        st.worst_excursion_bps = None
+                    except Exception:
+                        pass
             elif not is_active and deal_size == 0:
                 recovered = False
                 try:
@@ -817,6 +905,16 @@ async def reconcile_orders(
                         st.pending_markout_px = st.avg_cost; st.pending_markout_side = st.position_side or ""
                         st.entry_tp1_eff = s.tp1_eff; st.entry_tp2_eff = s.tp2_eff
                         await LOG.log("INFO", f"ENTRY_FILLED_RECOVER qty={f_sz} avg={st.avg_cost:.2f}")
+                        # [PHASE A] Record recovered entry to ledger, reset excursion
+                        if _PHASE_A_OK:
+                            try:
+                                _tag = str(getattr(st, "entry_intent_tag", "") or "")
+                                _side = "buy" if st.position_side == "LONG" else "sell"
+                                update_maturity_on_entry(st, _tag, _side)
+                                st.best_excursion_bps = None
+                                st.worst_excursion_bps = None
+                            except Exception:
+                                pass
                         recovered = True
                 except Exception:
                     recovered = False
@@ -1144,6 +1242,7 @@ async def execute_exit_ladder(
         _b_free, _b_total, _b_liab = await rest_to_thread(cli.accounts_any, CFG.symbol.split("-")[0])
         net_base = _b_total - _b_liab
         if abs(net_base) * s.px < CFG.dust_notional_usd:
+            _record_exit_to_ledger(st, s, kind)  # [PHASE A] record before flatten
             _flatten_state(st)
             st.cooldown_until = now_ts() + min(CFG.cooldown_max_sec, CFG.cooldown_base_sec)
             st.ghost_exit_order_id = ""; st.ghost_exit_side = ""
@@ -1221,6 +1320,7 @@ async def execute_exit_ladder(
         if qty_mkt < meta.base_min_size:
             rem_notional = abs(net_base_now) * s.px
             if rem_notional < CFG.position_close_notional_usd:
+                _record_exit_to_ledger(st, s, kind)  # [PHASE A]
                 _flatten_state(st)
                 await LOG.log("INFO", f"EXIT_DONE_DUST_AFTER_PARTIAL rem={rem_notional:.2f}")
                 return
@@ -1247,6 +1347,7 @@ async def execute_exit_ladder(
         await LOG.log("INFO", f"EXIT_MARKET_SENT side={exit_side} {kind} {why} qty={qty_mkt} id={order_id}")
         st.exit_inflight = False
         st.exit_order = None
+        _record_exit_to_ledger(st, s, kind)  # [PHASE A] record before flatten
         _flatten_state(st)
         st.cooldown_until = now_ts() + min(CFG.cooldown_max_sec, CFG.cooldown_base_sec)
         await LOG.log("INFO", "EXIT_DONE_MARKET")

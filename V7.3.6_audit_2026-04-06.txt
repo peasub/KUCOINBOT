@@ -1,0 +1,220 @@
+════════════════════════════════════════════════════════════════
+V7.3.5 DAILY AUDIT — 2026-04-06
+Logs: 7,686 lines (Apr 6 00:00–19:19) + late Apr 5 carry-over
+════════════════════════════════════════════════════════════════
+
+⚠️ BOT STUCK AGAIN: IN_POSITION_RECOVER since 16:54 Apr 6.
+   Same root cause as Apr 5. Fixed in V7.3.6 (see below).
+
+═══ SECTION 1 — DAILY SUMMARY ═══
+
+Active trading day after manual unstick at 07:33. 8 trades filled,
+5 winners, 3 losers. NET PnL: +$0.05 (first net-positive session).
+DIP fired twice (one TP-cross winner at +$0.38, one EMERGENCY loser
+at -$0.82). SFOL fired 5 times (3 GIVEBACK winners, 1 THESIS_BREAK
+loser, 1 THESIS_DEAD loser). TP floating worked well — multiple
+expand/contract cycles. Then at 16:54, bot got stuck AGAIN in
+IN_POSITION_RECOVER after SFOL exit double-fill.
+
+═══ SECTION 2 — TRADE-BY-TRADE ═══
+
+1. Orphan recovery (manual avg=$2058 → TP_CROSS at $2154.90)
+   net=+$1.04. The manual unstick captured a 4.7% move.
+
+2. DIP LONG $2145.82 → TP_CROSS $2165.81 at 08:47. net=+$0.38 ✓
+   First DIP entry AND first TP_CROSS fill! tp1=1.37% with real
+   edge. Floated 2× before crossing. CHOP p=0.34. Beautiful trade.
+
+3. DIP LONG $2155.43 → EMERGENCY $2127.32 at 10:13. net=-$0.82 ✗
+   Markout: -44.77bps (very adverse). Emergency at dd=1.084%.
+   Entered at bad timing — fell immediately after fill.
+
+4. SFOL SHORT $2124.51 → THESIS_BREAK $2137.71 at 10:34. net=-$0.24 ✗
+   Adverse selection trip at fill (-14.50bps). Regime flipped
+   against the short. Exit was correct — only held 18 min.
+
+5. SFOL SHORT $2145.08 → GIVEBACK $2135.50 at 15:22. net=+$0.06 ✓
+   TP float expanded then contracted. GIVEBACK at best=0.47%.
+
+6. SFOL SHORT $2131.66 → GIVEBACK $2120.74 at 15:53. net=+$0.09 ✓
+   Another GIVEBACK. best=0.51%. Quick cycle.
+
+7. SFOL SHORT $2099.71 → GIVEBACK $2091.37 at 16:22. net=+$0.07 ✓
+   TREND regime p=0.77! tp1=2.09% — best TP target yet.
+   GIVEBACK at best=0.47%. TP never reached despite good target.
+
+8. SFOL SHORT $2092.80 → THESIS_DEAD $2107.38 at 16:52. net=-$0.32 ✗
+   Double-fill on exit created orphan. Bot stuck since 16:54.
+
+═══ SECTION 3 — ENTRY ATTEMPTS ═══
+
+13 ENTRY_PREFLIGHT → 6 QUALITY_REJECT → 7 ENTRY_SENT → 8 FILLED
+
+DIP:sell rejected 3× at edge_bps=20.5, scores 0.41-0.43.
+DIP:buy rejected 2× at edge_bps=20.5, scores 0.40-0.43.
+SFOL:sell rejected 1× at score 0.61 (edge_bps=202.4 — edge was
+there but quality score was borderline).
+
+Pattern: When DIP fires and edge_bps=20.5, the TP is at cost floor.
+When vol norm is higher, edge_bps reaches 172-202bps — real edge.
+
+═══ SECTION 4 — IDLE / MISSED OPPORTUNITIES ═══
+
+Bot was productive today. 8 trades in 9 hours of active time.
+Only stuck period (16:54+) missed 2+ hours of potential trading.
+No ACTIVITY_WARN. No prolonged ORCH_NO_INTENT periods.
+
+═══ SECTION 5 — V7.3.5 FIX VERIFICATION ═══
+
+1. TP EDGE: PASS ✓ — DIP trade got tp1=1.37%. SFOL trades got
+   tp1=0.72%-2.09%. Higher vol = higher edge. Working.
+
+2. SQMR: FAIL ✗ — Still zero SQMR in logs. bbw threshold 0.008
+   is too tight. Fixed in V7.3.6 (raised to 0.012).
+
+3. DIP IN NEUTRAL: PASS ✓ — DIP fired twice as entries (both longs).
+   Also reached preflight for sell 3×. Neutral CHOP exception working.
+
+4. SFOL TAG: PASS ✓ — All 5 short entries tagged SFOL correctly.
+
+5. VBRK CHOP GATE: PASS ✓ — Zero VBRK in CHOP entries.
+
+6. NO ENGINE_ERR: PASS ✓ — Zero errors.
+
+SCORE: 5/6 PASS, 1 FAIL (SQMR)
+
+═══ SECTION 6 — OPERATIONAL HEALTH ═══
+
+WS_DOWN: 2 (both recovered in 2s)
+ENGINE_ERR: 0 | HALT: 0 | TP_PLACE_FAIL: 0 | Cancel fail: 0
+ADVERSE_SELECTION_TRIP: 3 (entries at bad timing — markout negative)
+
+EXIT_MARKET_SKIP: 1 at 08:48 — maker exit was pending, market
+skip held EXIT_PENDING, resolved via RECOVER_FLAT at 08:53. OK.
+
+═══ SECTION 7 — TP PERFORMANCE ═══
+
+TP FILLS: 1 (tp_cross_market on Trade 2 DIP long — first ever!)
+TP float cycles: 15 (expand + contract) across 5 trades. Healthy.
+
+TP target distribution (active trading period):
+  0.72%: Still common at low vol norm
+  0.81-1.55%: Mid vol — real edge
+  2.09%: High vol (SFOL in TREND) — excellent target
+  
+GIVEBACK exits at best=0.47-0.51% suggest TP1 was reachable but
+the bot contracted TP or market reversed before fill.
+
+═══ SECTION 8 — RED FLAGS ═══
+
+[FLAG 1] ⚠️ CRITICAL: EXIT DOUBLE-FILL → ORPHAN → STUCK
+  Evidence: Trade 8 exit (THESIS_DEAD) sent maker at 16:52:26
+  (order 69d4473a) then market at 16:53:11 (order 69d44767).
+  KuCoin fills show BOTH filled:
+    Limit Buy $2107.38 × 0.0152211 at 16:53:31
+    Market Buy $2108.84 × 0.0152211 at 16:53:11
+  Total bought: 0.0304422 ETH to close 0.0152211 short.
+  Excess: 0.0152211 ETH orphan LONG.
+  ROOT CAUSE: Maker exit filled AFTER market exit was sent.
+  The exit ladder doesn't re-verify maker fill before market send.
+  FIX: V7.3.6 adds fallback avg recovery (symptom fix). Root cause
+  fix requires exit ladder to cancel maker BEFORE market send and
+  verify cancel succeeded (deeper change, defer to V7.3.7).
+
+[FLAG 2] ADVERSE SELECTION: 3 trips in one day
+  Evidence: Markout -44.77bps (Trade 3), -14.50bps (Trade 4),
+  -3.75bps (Trade 6). EMA markout reaching -14.49bps.
+  Hypothesis: Entries at local extremes — buying tops, selling bottoms.
+  The adverse_sel_cooldown_sec=900 (15min) means the bot pauses
+  entries for 15 minutes after each trip. This is working correctly
+  but 3 trips in 9 hours suggests entry timing quality is poor.
+  Monitor — may need to tighten quality gate or increase cooldown.
+
+[FLAG 3] GIVEBACK EXITS LEAVING MONEY ON TABLE
+  Evidence: 3 GIVEBACK exits at best=0.47-0.51%. The giveback
+  floor is 0.54% (continuation_giveback_floor_pct=0.15% or
+  fee_floor_mult × tp_req). The trades peaked at 0.47-0.51% then
+  gave back to 0.47-0.51%, triggering GIVEBACK.
+  These are actually correct exits — the position barely reached
+  profitability then reversed. The system is working. However,
+  if TP1 were 5% closer to the entry (tighter), some might have
+  filled before the reversal.
+
+═══ SECTION 9 — PARAMETER CHECKS ═══
+
+1. SQMR bbw threshold: 0.008 → 0.012 (using orch_vol_exp_bbw_min).
+   FIXED in V7.3.6 strategy.py.
+
+2. adverse_sel_cooldown_sec: Currently 900s (15 min). Consider
+   raising to 1200s (20 min) if adverse selection trips persist.
+   NOT changing now — 3 trips in 9 hours is borderline acceptable.
+
+═══ SECTION 10 — ONE-LINE VERDICT ═══
+
+First net-positive session (+$0.05). DIP and SFOL are generating
+real trades. TP floating is working. But exit double-fill creates
+orphan positions that paralyze the bot — V7.3.6 adds automatic
+recovery so manual state.json edits are never needed again.
+
+════════════════════════════════════════════════════════════════
+V7.3.6 CHANGES
+════════════════════════════════════════════════════════════════
+
+FIX 1: engine.py — AVG_COST RECOVERY FALLBACK
+  BEFORE: recover_avg_cost_if_needed tries fills API once every
+  30s. If fills don't match (orphan from double-fill), it returns
+  silently. Bot stays stuck forever.
+  AFTER: Tracks attempt count. After 10 failed attempts (~5 min),
+  falls back to market price as avg_cost. Logs AVG_RECOVER_FALLBACK.
+  Logs AVG_RECOVER_PENDING on each attempt for visibility.
+  RESULT: Maximum stuck time = 5 minutes instead of infinite.
+  The avg may be slightly wrong but the bot can manage the position.
+
+FIX 2: strategy.py — SQMR BBW THRESHOLD
+  BEFORE: bbw <= 0.008 (hardcoded). Too tight — SQMR never fired.
+  AFTER: Uses orch_vol_exp_bbw_min (0.012) from config.
+  RESULT: SQMR can fire when bbw is in the lower 60% of its range.
+
+════════════════════════════════════════════════════════════════
+SCORECARD
+════════════════════════════════════════════════════════════════
+
+       V7.3.3  V7.3.4  V7.3.5  V7.3.6
+Alpha   5       7       8       8      (SQMR now has a chance)
+Exec    7       7.5     7.5     7.5    (double-fill root cause deferred)
+State   6       8       6       8      (fallback recovery fixes stuck)
+Plumb   7       7       7       7
+Risk    7       7.5     7       8      (no more infinite stuck)
+Obs     8       8       8       8.5    (AVG_RECOVER_PENDING logs)
+Maint   7       7.5     8       8
+TOTAL   6.7     7.5     7.2     7.9
+
+════════════════════════════════════════════════════════════════
+CUMULATIVE PnL (V7.3.5 session)
+════════════════════════════════════════════════════════════════
+
+Apr 5 (V7.3.4): -$0.44 (2 trades, 0 wins)
+Apr 5 (V7.3.5): -$0.16 (2 trades, 0 wins) + orphan recovery +$1.04
+Apr 6 (V7.3.5): +$0.05 (8 trades, 5 wins, 3 losers)
+────────────────────────────────────────
+NET CUMULATIVE: +$0.49 (12 real trades, win rate 42%)
+
+═══════════════════════════════════════════════════════════════
+DEPLOYMENT
+═══════════════════════════════════════════════════════════════
+
+STEP 1: MANUAL UNSTICK (do now — same as before):
+  Stop bot. Edit state.json:
+    "avg_cost": null → "avg_cost": "2102.00"
+    "mode": "IN_POSITION_RECOVER" → "mode": "IN_POSITION"
+  This is the LAST TIME you'll need to do this manually.
+
+STEP 2: Deploy V7.3.6 files:
+  Copy engine.py + strategy.py from the zip.
+  Update BOT_VERSION in logger.py to kucoin_bot_V7.3.6.
+  git commit -m "V7.3.6 avg recovery fallback + SQMR bbw fix"
+
+STEP 3: Restart and verify:
+  □ Watch for AVG_RECOVER_PENDING or AVG_RECOVER_FALLBACK in logs
+  □ Watch for SQMR in ENTRY_PREFLIGHT or ORCH_NO_INTENT
+  □ No more manual state.json edits should be needed

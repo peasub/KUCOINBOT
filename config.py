@@ -434,6 +434,28 @@ class Config:
     latency_watchdog_ws_age_max_sec: int = 4
     pause_log_sec: int = 15
 
+    # ----------------------------
+    # Phase A: Protections framework
+    # ----------------------------
+    # [PROVEN] Low conviction block — prevents entries like April 7 trade #6 (p=0.17 → EMERGENCY)
+    min_p_trend_for_entry: Decimal = Decimal("0.20")
+
+    # [INFERRED] Emergency exit directional cooldown (minutes)
+    emergency_cooldown_same_dir_minutes: int = 30
+
+    # [PROPOSED] Giveback guard — cooldown after profitable-then-loss exit
+    giveback_cooldown_minutes: int = 20
+
+    # [PROPOSED] Consecutive loss halt
+    max_consecutive_losses: int = 3
+    consecutive_loss_pause_minutes: int = 45
+
+    # [PROPOSED] Daily loss halt (bps, negative)
+    max_daily_loss_bps: Decimal = Decimal("-200")
+
+    # [INFERRED] Continuation maturity — enable penalty for same-worker same-direction streaks
+    maturity_penalty_enable: bool = True
+
 
 # ---------------------------------------------------------------------------
 # Global singleton — PRESERVED: all modules share this one instance.
