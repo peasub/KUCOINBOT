@@ -23,7 +23,7 @@ from decimal import Decimal
 from typing import List, Optional, Tuple
 
 from config import CFG
-from models import BotState, Intent, Regime, Snapshot
+from models import BotState, Intent, MKT, Regime, Snapshot
 from regime import (
     _orch_regime_route,
     compute_direction_bias,
@@ -570,7 +570,6 @@ def _squeeze_meanrev_worker(s: Snapshot, opp_decay: Decimal = D0) -> Optional[In
         # Block SQMR buy when price is near recent high AND falling (exhaustion/rejection pattern).
         if bool(getattr(CFG, "sqmr_exhaustion_guard_enable", True)):
             try:
-                from models import MKT
                 _lookback = int(getattr(CFG, "sqmr_exhaustion_lookback", 30))
                 _closes = getattr(MKT, "closes_1m", None)
                 if _closes and len(_closes) >= _lookback:
@@ -874,7 +873,7 @@ def exit_signal(s: Snapshot, st: BotState) -> Tuple[Optional[str], str]:
                     Decimal(str(getattr(CFG, "continuation_giveback_fee_floor_mult", Decimal("0.75")))) * Decimal(str(getattr(s, "tp_req", D0))),
                 )
                 # [V7.4.1 RC-3] Dynamic trailing floor — trade #8 had best=91bps, exited at 50bps
-                # Instead of flat 0.54%, trail at 55% of peak profit
+                # Trail at configurable % of peak profit (default 65%)
                 if bool(getattr(CFG, "giveback_dynamic_enable", True)) and best_upnl > D0:
                     _trail_pct = Decimal(str(getattr(CFG, "giveback_dynamic_trail_pct", Decimal("0.55"))))
                     _dynamic_floor = best_upnl * _trail_pct
@@ -906,7 +905,7 @@ def exit_signal(s: Snapshot, st: BotState) -> Tuple[Optional[str], str]:
                     s.reg.name == "CHOP"
                     and s.pos_age_min >= _chop_dead_age
                     and best_upnl <= Decimal(str(getattr(CFG, "continuation_dead_best_upnl_min", Decimal("0.0025"))))
-                    and s.upnl_pct <= Decimal("0.0015")  # slightly looser than standard
+                    and s.upnl_pct <= Decimal(str(getattr(CFG, "continuation_dead_cur_upnl_max_chop", Decimal("0.0015"))))  # looser than standard 0.0008
                 ):
                     return "THESIS_DEAD", f"tag={entry_tag} best={(best_upnl*100):.2f}% age={s.pos_age_min}m chop_fast"
         except Exception:

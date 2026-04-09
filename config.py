@@ -468,6 +468,7 @@ class Config:
 
     # [PROVEN RC-2] Faster THESIS_DEAD in CHOP — 45min too slow, damage done by then
     continuation_dead_age_min_chop: int = 25
+    continuation_dead_cur_upnl_max_chop: Decimal = Decimal("0.0015")  # looser than standard 0.0008
 
     # [PROVEN RC-3] Dynamic GIVEBACK — trade #8 had best=91bps, exited at 50bps (gave back 45%)
     giveback_dynamic_trail_pct: Decimal = Decimal("0.65")  # floor = max(static_floor, best * this)
@@ -476,7 +477,7 @@ class Config:
     # [PROVEN RC-1] SQMR exhaustion guard — bought into $2270 top, should have been blocked
     sqmr_exhaustion_guard_enable: bool = True
     sqmr_exhaustion_lookback: int = 30          # candles to check for recent high
-    sqmr_exhaustion_proximity_bps: Decimal = Decimal("50")  # within N bps of recent high
+    sqmr_exhaustion_proximity_bps: Decimal = Decimal("80")  # within N bps of recent high
     sqmr_exhaustion_ret5_max: Decimal = Decimal("-0.0015")   # falling from high (negative ret5)
 
     # [PROVEN RC-5] Max daily loss tiered recovery — blocked 87 profitable signals for 3+ hours
