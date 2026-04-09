@@ -135,11 +135,23 @@ def _check_consecutive_losses(st: "BotState") -> Tuple[bool, str]:
 
 
 def _check_daily_loss(st: "BotState") -> Tuple[bool, str]:
-    """If cumulative daily PnL exceeds negative threshold, halt for the rest of the day."""
+    """If cumulative daily PnL exceeds negative threshold, halt for the rest of the day.
+    [V7.4.1] Tiered recovery: after N minutes of halt, allow entry at reduced size.
+    [PROVEN RC-5] Apr 8: blocked 87 profitable short signals for 3+ hours.
+    """
     try:
         daily_pnl = Decimal(str(getattr(st, "prot_daily_pnl_bps", D0) or D0))
         max_loss = Decimal(str(getattr(CFG, "max_daily_loss_bps", Decimal("-200"))))
         if daily_pnl <= max_loss:
+            # [V7.4.1] Check tiered recovery
+            if bool(getattr(CFG, "daily_loss_recovery_enable", True)):
+                last_exit_ts = float(getattr(st, "prot_last_exit_ts", 0.0) or 0.0)
+                elapsed_min = (now_ts() - last_exit_ts) / 60.0 if last_exit_ts > 0 else 0
+                recovery_after = float(getattr(CFG, "daily_loss_recovery_after_minutes", 120))
+                if elapsed_min >= recovery_after:
+                    # Allow entry — the engine will apply reduced size via prot_recovery_size_mult
+                    st.prot_in_recovery_mode = True  # type: ignore[attr-defined]
+                    return True, ""
             return False, f"max_daily_loss:daily_pnl={daily_pnl:.0f}bps<={max_loss:.0f}bps"
     except Exception:
         pass
@@ -204,18 +216,22 @@ def update_maturity_on_entry(st: "BotState", worker_tag: str, side: str) -> None
 
 def continuation_maturity_penalty(st: "BotState", intent: "Intent") -> Decimal:
     """Returns a score penalty (0.0 to 0.30) for continuation entries.
-    [INFERRED] April 7 logs show SFOL SHORT firing 4 times in sequence.
-    Each successive entry in the same direction faces diminishing returns.
+    [V7.4.1] Steepened from 0.05/step to configurable (default 0.10/step).
+    [V7.4.1] Hard block after max_streak consecutive same-worker same-direction.
+    [PROVEN] April 8: SFOL SHORT fired 4x in CHOP, trades #2-5 lost -82 bps net.
     """
     try:
         last_tag = str(getattr(st, "prot_last_worker_tag", "") or "")
         last_side = str(getattr(st, "prot_last_entry_side", "") or "")
         if last_tag == intent.strategy_id and last_side == intent.side:
             streak = int(getattr(st, "prot_same_direction_streak", 0) or 0)
-            # streak=0 → first continuation → -0.05
-            # streak=1 → second continuation → -0.10
-            # streak=2+ → -0.15 to -0.30
-            penalty = min(Decimal("0.30"), Decimal("0.05") * Decimal(str(streak + 1)))
+            # [V7.4.1] Hard cap — return infinite penalty (blocks entry)
+            max_streak = int(getattr(CFG, "maturity_max_streak", 3))
+            if streak >= max_streak:
+                return Decimal("9.99")  # effectively blocks any entry
+            # [V7.4.1] Steepened from 0.05 to configurable
+            step = Decimal(str(getattr(CFG, "maturity_penalty_per_step", Decimal("0.10"))))
+            penalty = min(Decimal("0.30"), step * Decimal(str(streak + 1)))
             return penalty
     except Exception:
         pass

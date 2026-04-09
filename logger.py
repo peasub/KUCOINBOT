@@ -157,7 +157,7 @@ class Logger:
 # ----------------------------
 # Global singletons — PRESERVED
 # ----------------------------
-BOT_VERSION = os.getenv("BOT_VERSION", "kucoin_bot_V7.4.0")  # [AUDIT FIX] V7.3.5 — TP edge scaling, SQMR prob gate, SFOL worker, CHOP fixes
+BOT_VERSION = os.getenv("BOT_VERSION", "kucoin_bot_V7.4.1")  # [V7.4.1] Apr-08 audit fixes: SFOL CHOP penalty, dynamic GIVEBACK, SQMR exhaustion guard, maturity steepening, daily loss tiered recovery
 LOG = Logger(BOT_VERSION)
 
 # Reference to the live BotState (set by engine_loop at startup).

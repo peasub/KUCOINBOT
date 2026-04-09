@@ -456,6 +456,34 @@ class Config:
     # [INFERRED] Continuation maturity — enable penalty for same-worker same-direction streaks
     maturity_penalty_enable: bool = True
 
+    # ----------------------------
+    # V7.4.1: April 8 audit fixes
+    # ----------------------------
+    # [PROVEN RC-4] SFOL CHOP penalty — SFOL lost -178bps across 6 CHOP trades on Apr 8
+    sfol_chop_score_penalty: Decimal = Decimal("0.20")
+
+    # [PROVEN RC-4] Steeper maturity — 0.05/step was too gentle, 4 consecutive SFOLs still entered
+    maturity_penalty_per_step: Decimal = Decimal("0.10")
+    maturity_max_streak: int = 3   # hard block after this many consecutive same-worker same-direction
+
+    # [PROVEN RC-2] Faster THESIS_DEAD in CHOP — 45min too slow, damage done by then
+    continuation_dead_age_min_chop: int = 25
+
+    # [PROVEN RC-3] Dynamic GIVEBACK — trade #8 had best=91bps, exited at 50bps (gave back 45%)
+    giveback_dynamic_trail_pct: Decimal = Decimal("0.65")  # floor = max(static_floor, best * this)
+    giveback_dynamic_enable: bool = True
+
+    # [PROVEN RC-1] SQMR exhaustion guard — bought into $2270 top, should have been blocked
+    sqmr_exhaustion_guard_enable: bool = True
+    sqmr_exhaustion_lookback: int = 30          # candles to check for recent high
+    sqmr_exhaustion_proximity_bps: Decimal = Decimal("50")  # within N bps of recent high
+    sqmr_exhaustion_ret5_max: Decimal = Decimal("-0.0015")   # falling from high (negative ret5)
+
+    # [PROVEN RC-5] Max daily loss tiered recovery — blocked 87 profitable signals for 3+ hours
+    daily_loss_recovery_enable: bool = True
+    daily_loss_recovery_after_minutes: int = 120   # allow test trade after N minutes of halt
+    daily_loss_recovery_size_mult: Decimal = Decimal("0.50")  # at reduced size
+
 
 # ---------------------------------------------------------------------------
 # Global singleton — PRESERVED: all modules share this one instance.

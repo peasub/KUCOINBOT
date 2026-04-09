@@ -596,6 +596,16 @@ async def engine_loop(cli: KuCoinClient, meta: SymbolMeta) -> None:
                                 except Exception:
                                     pass
 
+                            # [V7.4.1 RC-5] Apply recovery mode size reduction
+                            if _PHASE_A_AVAILABLE and bool(getattr(st, "prot_in_recovery_mode", False)):
+                                try:
+                                    _recov_mult = Decimal(str(getattr(CFG, "daily_loss_recovery_size_mult", Decimal("0.50"))))
+                                    intent.size_mult = intent.size_mult * _recov_mult
+                                    await LOG.log("INFO", f"RECOVERY_MODE_ENTRY tag={intent.strategy_id} size_mult_adj={intent.size_mult:.2f}")
+                                    st.prot_in_recovery_mode = False  # type: ignore[attr-defined]
+                                except Exception:
+                                    pass
+
                             # [AUDIT FIX RC-5] Quality gate runs inside place_entry; no double-call
                             await LOG.log("INFO", f"ENTRY_PREFLIGHT tag={intent.strategy_id} side={intent.side} score={intent.score:.2f} urg={intent.urgency}")
                             await place_entry(cli, meta, st, s, intent)

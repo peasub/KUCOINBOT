@@ -566,6 +566,22 @@ def _squeeze_meanrev_worker(s: Snapshot, opp_decay: Decimal = D0) -> Optional[In
     if bias > 0:
         if s.rsi > rsi_max:
             return None
+        # [V7.4.1 RC-1] SQMR exhaustion guard — Apr 8 trade #6 bought at $2254 into $2270 top.
+        # Block SQMR buy when price is near recent high AND falling (exhaustion/rejection pattern).
+        if bool(getattr(CFG, "sqmr_exhaustion_guard_enable", True)):
+            try:
+                from models import MKT
+                _lookback = int(getattr(CFG, "sqmr_exhaustion_lookback", 30))
+                _closes = getattr(MKT, "closes_1m", None)
+                if _closes and len(_closes) >= _lookback:
+                    _recent_high = max(_closes[-_lookback:])
+                    _prox_bps = Decimal(str(getattr(CFG, "sqmr_exhaustion_proximity_bps", Decimal("50"))))
+                    _dist_from_high = ((_recent_high - s.px) / _recent_high) * Decimal("10000") if _recent_high > 0 else Decimal("9999")
+                    _ret5_max = Decimal(str(getattr(CFG, "sqmr_exhaustion_ret5_max", Decimal("-0.0015"))))
+                    if _dist_from_high < _prox_bps and s.ret5_1m is not None and Decimal(str(s.ret5_1m)) < _ret5_max:
+                        return None  # block: near recent high and falling = exhaustion
+            except Exception:
+                pass
         if s.px < s.vwap * (D1 - disc):
             score = float(s.reg.p_chop) + float((s.vwap - s.px) / s.vwap) * 100.0
             return Intent("buy", "SQMR", score, 0, Decimal(str(CFG.sqmr_size_mult)), "SQUEEZE_MEANREV")
@@ -750,7 +766,11 @@ def orchestrate(intents: List[Intent], reg: Regime, st: Optional[BotState]) -> O
         bonus = pri.get(i.strategy_id, 1.0)
         route_bonus = float(route_w.get(i.strategy_id, D1))
         alpha_boost = float(opp) * (0.40 if i.strategy_id in ("MOMO", "VBRK", "SFOL") else 0.25)
-        return (base * bonus * route_bonus) + alpha_boost + (0.05 * float(i.urgency))
+        result = (base * bonus * route_bonus) + alpha_boost + (0.05 * float(i.urgency))
+        # [V7.4.1 RC-4] SFOL CHOP penalty — SFOL lost -178bps in 6 CHOP trades on Apr 8
+        if i.strategy_id == "SFOL" and reg.name == "CHOP":
+            result -= float(getattr(CFG, "sfol_chop_score_penalty", Decimal("0.20")))
+        return result
 
     if want_side is None and bool(getattr(CFG, "orch_neutral_enable", True)):
         buy_cand = [i for i in cand if i.side == "buy"]
@@ -853,6 +873,12 @@ def exit_signal(s: Snapshot, st: BotState) -> Tuple[Optional[str], str]:
                     Decimal(str(getattr(CFG, "continuation_giveback_floor_pct", Decimal("0.0015")))),
                     Decimal(str(getattr(CFG, "continuation_giveback_fee_floor_mult", Decimal("0.75")))) * Decimal(str(getattr(s, "tp_req", D0))),
                 )
+                # [V7.4.1 RC-3] Dynamic trailing floor — trade #8 had best=91bps, exited at 50bps
+                # Instead of flat 0.54%, trail at 55% of peak profit
+                if bool(getattr(CFG, "giveback_dynamic_enable", True)) and best_upnl > D0:
+                    _trail_pct = Decimal(str(getattr(CFG, "giveback_dynamic_trail_pct", Decimal("0.55"))))
+                    _dynamic_floor = best_upnl * _trail_pct
+                    giveback_floor = max(giveback_floor, _dynamic_floor)
                 if (
                     best_upnl >= Decimal(str(getattr(CFG, "continuation_giveback_arm_pct", Decimal("0.0045"))))
                     and s.upnl_pct <= giveback_floor
@@ -872,6 +898,17 @@ def exit_signal(s: Snapshot, st: BotState) -> Tuple[Optional[str], str]:
                     and s.reg.p_breakout <= Decimal(str(getattr(CFG, "continuation_dead_p_break_max", Decimal("0.55"))))
                 ):
                     return "THESIS_DEAD", f"tag={entry_tag} best={(best_upnl*100):.2f}% age={s.pos_age_min}m"
+
+                # [V7.4.1 RC-2] Faster THESIS_DEAD in CHOP — 45min too slow, Apr 8 trade #10
+                # held 117min to EMERGENCY. Use shorter timeout when regime is CHOP.
+                _chop_dead_age = int(getattr(CFG, "continuation_dead_age_min_chop", 25))
+                if (
+                    s.reg.name == "CHOP"
+                    and s.pos_age_min >= _chop_dead_age
+                    and best_upnl <= Decimal(str(getattr(CFG, "continuation_dead_best_upnl_min", Decimal("0.0025"))))
+                    and s.upnl_pct <= Decimal("0.0015")  # slightly looser than standard
+                ):
+                    return "THESIS_DEAD", f"tag={entry_tag} best={(best_upnl*100):.2f}% age={s.pos_age_min}m chop_fast"
         except Exception:
             pass
 
