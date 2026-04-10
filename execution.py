@@ -1210,7 +1210,29 @@ async def execute_exit_ladder(
         qty = q_down(truth_qty, meta.base_increment)
 
     if qty < meta.base_min_size:
+        # [V7.4.2 CRITICAL FIX] Was silent return → caused infinite cancel-TP loop (3846 iterations, 30+ hours stuck).
+        # After TP1 partial fill, remaining qty was below base_min_size. The bot cancelled TPs,
+        # hit this check, returned silently, re-placed TPs, cancelled again — forever.
+        # Now: check notional, flatten if dust, escape after too many attempts.
         st.exit_inflight = False
+        net_base = qty_info.get("net_base", D0)
+        rem_notional = abs(net_base) * s.px if net_base != D0 else abs(st.position_qty * s.px)
+        if rem_notional < CFG.position_close_notional_usd:
+            _record_exit_to_ledger(st, s, kind)
+            _flatten_state(st)
+            st.cooldown_until = now_ts() + min(CFG.cooldown_max_sec, CFG.cooldown_base_sec)
+            await LOG.log("INFO", f"EXIT_DONE_DUST_EARLY qty={qty} rem={rem_notional:.2f}")
+            st.last_trade_event_ts = now_ts()
+            return
+        # Hard escape: if we've been trying to exit for > 50 attempts, force flatten
+        if st.exit_attempts >= int(getattr(CFG, "exit_stuck_max_attempts", 50)):
+            _record_exit_to_ledger(st, s, kind)
+            _flatten_state(st)
+            st.cooldown_until = now_ts() + min(CFG.cooldown_max_sec, CFG.cooldown_base_sec)
+            await LOG.log("WARN", f"EXIT_FORCE_FLATTEN exit_attempts={st.exit_attempts} qty={qty} rem={rem_notional:.2f} — stuck loop escape")
+            st.last_trade_event_ts = now_ts()
+            return
+        await LOG.log("WARN", f"EXIT_QTY_TOO_SMALL qty={qty} min={meta.base_min_size} rem={rem_notional:.2f} attempts={st.exit_attempts}")
         return
 
     # Maker attempt
@@ -1330,6 +1352,14 @@ async def execute_exit_ladder(
                 st.exit_inflight = False
                 st.mode = "EXIT_PENDING"
             else:
+                # [V7.4.2] Also add stuck escape here
+                if st.exit_attempts >= int(getattr(CFG, "exit_stuck_max_attempts", 50)):
+                    _record_exit_to_ledger(st, s, kind)
+                    _flatten_state(st)
+                    st.cooldown_until = now_ts() + min(CFG.cooldown_max_sec, CFG.cooldown_base_sec)
+                    await LOG.log("WARN", f"EXIT_FORCE_FLATTEN_MARKET exit_attempts={st.exit_attempts} rem={rem_notional:.2f}")
+                    st.last_trade_event_ts = now_ts()
+                    return
                 await LOG.log("WARN", f"EXIT_MARKET_SKIP rem_notional={rem_notional:.2f} no_exit_order -> IN_POSITION")
                 st.exit_inflight = False
                 st.mode = "IN_POSITION"

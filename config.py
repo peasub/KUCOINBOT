@@ -485,6 +485,9 @@ class Config:
     daily_loss_recovery_after_minutes: int = 120   # allow test trade after N minutes of halt
     daily_loss_recovery_size_mult: Decimal = Decimal("0.50")  # at reduced size
 
+    # [V7.4.2 CRITICAL] Stuck exit escape — force flatten after N failed exit attempts
+    exit_stuck_max_attempts: int = 50
+
 
 # ---------------------------------------------------------------------------
 # Global singleton — PRESERVED: all modules share this one instance.
