@@ -1307,6 +1307,14 @@ async def execute_exit_ladder(
             return
 
     # Last-resort market order
+    # [V7.4.3 FIX] Track the maker exit order as ghost BEFORE market fallback.
+    # Without this, if the maker fills late after market exit, it creates a phantom position
+    # that nothing tracks or cancels. Root cause of Apr-11 "wrong buy" incident.
+    if st.exit_order is not None:
+        st.ghost_exit_order_id = st.exit_order.order_id
+        st.ghost_exit_side = st.exit_order.side
+        st.ghost_exit_guard_until = now_ts() + float(getattr(CFG, "ghost_exit_guard_sec", 2400))
+        st.last_ghost_exit_poll_ts = 0.0
     try:
         cancel_ok = True
         opens = await rest_to_thread(cli.list_open_orders_any, CFG.symbol)

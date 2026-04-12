@@ -644,6 +644,48 @@ async def engine_loop(cli: KuCoinClient, meta: SymbolMeta) -> None:
                 if action is not None:
                     await execute_exit_ladder(cli, meta, st, s, action, why)
 
+            # ── [V7.4.3] EXIT_PENDING timeout handler ──────────────────────
+            elif st.mode == "EXIT_PENDING":
+                # Track excursion while in EXIT_PENDING (position still open)
+                if _PHASE_A_AVAILABLE and st.avg_cost is not None and st.avg_cost > 0:
+                    try:
+                        _side = st.position_side or s.pos_side
+                        if _side == "LONG":
+                            _exc_bps = ((s.px - st.avg_cost) / st.avg_cost) * Decimal("10000")
+                        elif _side == "SHORT":
+                            _exc_bps = ((st.avg_cost - s.px) / st.avg_cost) * Decimal("10000")
+                        else:
+                            _exc_bps = D0
+                        if st.best_excursion_bps is None or _exc_bps > st.best_excursion_bps:
+                            st.best_excursion_bps = _exc_bps
+                        if st.worst_excursion_bps is None or _exc_bps < st.worst_excursion_bps:
+                            st.worst_excursion_bps = _exc_bps
+                    except Exception:
+                        pass
+
+                # Timeout: if exit_order is stale, cancel it and return to IN_POSITION
+                # so the next exit_signal + execute_exit_ladder cycle can fire normally
+                if st.exit_order is not None:
+                    _exit_age = ts - st.exit_order.created_ts
+                    if _exit_age >= float(CFG.exit_pending_timeout_sec):
+                        try:
+                            from execution import _safe_cancel
+                            ok = await _safe_cancel(cli, st.exit_order.order_id, st, "EXIT_PENDING_TIMEOUT")
+                            if ok:
+                                await LOG.log("WARN", f"EXIT_PENDING_TIMEOUT age={int(_exit_age)}s order={st.exit_order.order_id} -> cancel+retry")
+                                st.exit_order = None
+                                st.exit_inflight = False
+                                st.mode = "IN_POSITION"
+                            else:
+                                await LOG.log("WARN", f"EXIT_PENDING_TIMEOUT_CANCEL_FAIL age={int(_exit_age)}s -> will retry")
+                        except Exception as _epe:
+                            await LOG.log("WARN", f"EXIT_PENDING_TIMEOUT_ERR {_epe}")
+                elif s.pos_usd < CFG.dust_notional_usd:
+                    # No exit_order AND no position — we're actually flat
+                    from execution import _flatten_state
+                    _flatten_state(st)
+                    await LOG.log("WARN", "EXIT_PENDING_RESOLVED position=dust -> FLAT")
+
             state_save(st)
             await asyncio.sleep(1)
 

@@ -488,6 +488,9 @@ class Config:
     # [V7.4.2 CRITICAL] Stuck exit escape — force flatten after N failed exit attempts
     exit_stuck_max_attempts: int = 50
 
+    # [V7.4.3] EXIT_PENDING timeout — cancel stale maker exit and force market after N seconds
+    exit_pending_timeout_sec: int = 120  # 2 minutes; maker exits that sit longer are stale
+
 
 # ---------------------------------------------------------------------------
 # Global singleton — PRESERVED: all modules share this one instance.
