@@ -465,6 +465,7 @@ class Config:
     # [PROVEN RC-4] Steeper maturity — 0.05/step was too gentle, 4 consecutive SFOLs still entered
     maturity_penalty_per_step: Decimal = Decimal("0.10")
     maturity_max_streak: int = 3   # hard block after this many consecutive same-worker same-direction
+    maturity_quality_weight: Decimal = Decimal("0.50")  # [DAILY AUDIT FIX] how much maturity penalty dampens quality score (0.50 = 50% pass-through)
 
     # [PROVEN RC-2] Faster THESIS_DEAD in CHOP — 45min too slow, damage done by then
     continuation_dead_age_min_chop: int = 25

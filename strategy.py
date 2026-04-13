@@ -108,6 +108,14 @@ def assess_entry_quality(s: Snapshot, intent: Intent) -> Tuple[bool, Decimal, st
         edge_sc = _clip01(edge_bps / Decimal("20"))
         score = (p_sc * Decimal("0.28") + adx_sc * Decimal("0.22") + di_sc * Decimal("0.18")
                  + ema_sc * Decimal("0.16") + edge_sc * Decimal("0.16"))
+        # [DAILY AUDIT FIX] Apply maturity damping — makes streak 1-2 penalties effective
+        try:
+            _mp = Decimal(str(getattr(intent, "_maturity_penalty", 0) or 0))
+            if _mp > D0:
+                _mw = Decimal(str(getattr(CFG, "maturity_quality_weight", Decimal("0.50"))))
+                score = score * (D1 - _mp * _mw)
+        except Exception:
+            pass
         min_score = Decimal(str(getattr(CFG, "long_quality_score_min", Decimal("0.60"))))
         if score < min_score:
             reasons.append(f"score_low:{score:.2f}")
@@ -152,6 +160,14 @@ def assess_entry_quality(s: Snapshot, intent: Intent) -> Tuple[bool, Decimal, st
         edge_sc = _clip01(edge_bps / Decimal("20"))
         score = (p_sc * Decimal("0.28") + adx_sc * Decimal("0.22") + di_sc_short * Decimal("0.18")
                  + ema_sc_short * Decimal("0.16") + edge_sc * Decimal("0.16"))
+        # [DAILY AUDIT FIX] Apply maturity damping — makes streak 1-2 penalties effective
+        try:
+            _mp = Decimal(str(getattr(intent, "_maturity_penalty", 0) or 0))
+            if _mp > D0:
+                _mw = Decimal(str(getattr(CFG, "maturity_quality_weight", Decimal("0.50"))))
+                score = score * (D1 - _mp * _mw)
+        except Exception:
+            pass
         min_score = Decimal(str(getattr(CFG, "short_quality_score_min", Decimal("0.62"))))
         if score < min_score:
             reasons.append(f"score_low:{score:.2f}")

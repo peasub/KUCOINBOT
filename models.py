@@ -351,6 +351,7 @@ class Intent:
     urgency: int       # 0=passive, 1=moderate, 2=taker-eligible
     size_mult: Decimal = Decimal("1.0")
     reason: str = ""
+    _maturity_penalty: float = 0.0  # [DAILY AUDIT FIX] set by engine, read by quality gate
 
 
 # ----------------------------

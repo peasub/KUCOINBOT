@@ -1118,8 +1118,10 @@ def _flatten_state(st: BotState) -> None:
     st.entry_order = None
     st.tp1_order = None
     st.tp2_order = None
-    st.peak_price = None
+    st.exit_order = None          # [DAILY AUDIT FIX] was missing — stale exit refs persisted
     st.exit_inflight = False
+    st.exit_attempts = 0          # [DAILY AUDIT FIX] was missing — counter grew across trades
+    st.peak_price = None
     st.entry_tp1_eff = None; st.entry_tp2_eff = None
     st.trade_tp1_eff = None; st.trade_tp2_eff = None; st.trade_tp_mode = ""
     st.trade_tp_base = None; st.trade_vol_metric = None

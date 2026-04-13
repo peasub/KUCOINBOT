@@ -592,6 +592,7 @@ async def engine_loop(cli: KuCoinClient, meta: SymbolMeta) -> None:
                                     _mat_pen = continuation_maturity_penalty(st, intent)
                                     if _mat_pen > D0:
                                         intent.score = max(0.0, intent.score - float(_mat_pen))
+                                        intent._maturity_penalty = float(_mat_pen)  # [DAILY AUDIT FIX] pass to quality gate
                                         await LOG.log("INFO", f"MATURITY_PENALTY tag={intent.strategy_id} side={intent.side} penalty={_mat_pen:.2f} adj_score={intent.score:.2f} streak={getattr(st,'prot_same_direction_streak',0)}")
                                 except Exception:
                                     pass
