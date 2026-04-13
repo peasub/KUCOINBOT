@@ -606,9 +606,29 @@ async def engine_loop(cli: KuCoinClient, meta: SymbolMeta) -> None:
                                 except Exception:
                                     pass
 
-                            # [AUDIT FIX RC-5] Quality gate runs inside place_entry; no double-call
-                            await LOG.log("INFO", f"ENTRY_PREFLIGHT tag={intent.strategy_id} side={intent.side} score={intent.score:.2f} urg={intent.urgency}")
-                            await place_entry(cli, meta, st, s, intent)
+                            # [V7.4.3 FIX] Hard block when maturity penalty kills score.
+                            # Root cause: maturity_penalty sets intent.score=0 but assess_entry_quality
+                            # computes an independent score, so the penalty was cosmetic.
+                            # April 12: SFOL SHORT fired 8x (streak 0-7), trades 4-8 should have been blocked.
+                            if intent.score <= 0:
+                                await LOG.log("WARN", f"ENTRY_MATURITY_BLOCK tag={intent.strategy_id} side={intent.side} score={intent.score:.2f} streak={getattr(st,'prot_same_direction_streak',0)}")
+                                if _PHASE_A_AVAILABLE:
+                                    try:
+                                        record_trade_quality(build_entry_rejected_record(
+                                            ts=now_ts(), regime_name=s.reg.name,
+                                            p_trend=s.reg.p_trend, p_chop=s.reg.p_chop, p_breakout=s.reg.p_breakout,
+                                            direction_bias=int(getattr(s.reg, "direction_bias", 0) or 0),
+                                            worker_tag=intent.strategy_id, raw_score=Decimal(str(intent.score)),
+                                            orch_adjusted_score=D0,
+                                            blocker_family="maturity_hard_block", edge_bps=D0,
+                                            side=intent.side, notes=f"streak={getattr(st,'prot_same_direction_streak',0)}",
+                                        ))
+                                    except Exception:
+                                        pass
+                            else:
+                                # [AUDIT FIX RC-5] Quality gate runs inside place_entry; no double-call
+                                await LOG.log("INFO", f"ENTRY_PREFLIGHT tag={intent.strategy_id} side={intent.side} score={intent.score:.2f} urg={intent.urgency}")
+                                await place_entry(cli, meta, st, s, intent)
 
             elif st.mode in ("IN_POSITION", "IN_POSITION_RECOVER"):
                 # [PHASE A] Track best/worst excursion while in position

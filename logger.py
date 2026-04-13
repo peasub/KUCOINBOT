@@ -157,7 +157,7 @@ class Logger:
 # ----------------------------
 # Global singletons — PRESERVED
 # ----------------------------
-BOT_VERSION = os.getenv("BOT_VERSION", "kucoin_bot_V7.4.2")  # [V7.4.2] CRITICAL: fix infinite cancel-TP loop after partial TP fill
+BOT_VERSION = os.getenv("BOT_VERSION", "kucoin_bot_V7.4.3")  # [V7.4.2] CRITICAL: fix infinite cancel-TP loop after partial TP fill
 LOG = Logger(BOT_VERSION)
 
 # Reference to the live BotState (set by engine_loop at startup).

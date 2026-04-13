@@ -155,7 +155,7 @@ class Config:
     short_followthrough_p_trend_strong: Decimal = Decimal("0.80")
     short_followthrough_ret3_max: Decimal = Decimal("-0.0008")
     short_followthrough_score_boost: Decimal = Decimal("0.18")
-    short_followthrough_rsi_min_chop: Decimal = Decimal("24")
+    short_followthrough_rsi_min_chop: Decimal = Decimal("30")  # [DAILY AUDIT FIX Apr-12] was 24; trade #1 entered at RSI 26 into oversold bounce, lost -41bps
     short_followthrough_p_trend_min_chop: Decimal = Decimal("0.52")
     short_followthrough_p_break_min_chop: Decimal = Decimal("0.60")
     continuation_giveback_enable: bool = True
